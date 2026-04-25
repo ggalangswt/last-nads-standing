@@ -29,7 +29,7 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.CORS_ORIGIN || "*",
+    origin: "https://last-nads-standing-web.vercel.app",
     methods: ["GET", "POST"],
   },
   transports: ["websocket", "polling"],
