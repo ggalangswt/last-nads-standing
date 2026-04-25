@@ -123,7 +123,7 @@ Gunakan `OpsClient` dari `apps/ops/src/client.js` untuk integrasi dengan fronten
 ```javascript
 import OpsClient from "./path/to/ops/src/client.js";
 
-const opsClient = new OpsClient("http://localhost:3001");
+const opsClient = new OpsClient("https://ops-production-edd1.up.railway.app");
 
 opsClient.connect();
 

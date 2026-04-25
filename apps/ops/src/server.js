@@ -166,6 +166,14 @@ async function ensureDemoRoomExists() {
 
     const roomAddresses = await getRoomAddresses();
     if (roomAddresses.length > 0) {
+      const demoRoom = opsContracts.demoRoom.address;
+      const demoRoomState = await getRoomInfo(demoRoom, { force: true, includePlayers: true }).catch(() => null);
+      if (demoRoomState && Number(demoRoomState.totalPlayers) < 8) {
+        const seeded = await keeperService.bootstrapDemoRoom(demoRoom, 8);
+        if (seeded.success) {
+          roomCache.clear();
+        }
+      }
       return;
     }
 
@@ -200,6 +208,12 @@ function broadcastUpdate(type, data = {}) {
   };
 
   io.emit(type, message);
+
+  if (type === "player_joined" && autoStartGames && payload.roomAddress) {
+    setTimeout(() => {
+      void progressRoom(payload.roomAddress);
+    }, 800);
+  }
 }
 
 async function getPlayerDetails(roomContract, playerAddresses) {
@@ -428,7 +442,7 @@ app.get("/health", (_req, res) => {
     ok: true,
     service: "ops",
     port,
-    socketUrl: `http://localhost:${port}`,
+    socketUrl: `https://ops-production-edd1.up.railway.app`,
     chainId: opsContracts.chainId,
     keeperConfigured: keeperService.hasWallet,
     keeperIntervalMs,

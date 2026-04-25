@@ -2,12 +2,13 @@ import { useQuery } from "@tanstack/react-query";
 import type { Address } from "viem";
 import { formatUnits } from "viem";
 
+import { roomContract } from "@/lib/contracts/config";
 import { env } from "@/lib/env";
 
 export type LiveRoom = {
   address: Address;
   id: number;
-  source: "ops" | "mock";
+  source: "ops" | "fixed" | "mock";
   status: "waiting" | "live" | "finished";
   prize: string;
   prizeRaw: bigint;
@@ -97,7 +98,7 @@ export function useRoomDirectory(decimals = 6, refreshKey = 0) {
         return {
           address: room.address,
           id: roomId,
-          source: mockAddresses.has(room.address.toLowerCase()) ? "mock" : "ops",
+          source: room.address.toLowerCase() === roomContract.address.toLowerCase() ? "fixed" : mockAddresses.has(room.address.toLowerCase()) ? "mock" : "ops",
           status: mapStatus(room.statusCode, room.status),
           prize: formatUnits(prizeRaw, decimals),
           prizeRaw,
@@ -125,7 +126,7 @@ function getMockRooms(): OpsRoomResponse[] {
 
   return [
     {
-      address: "0xaddbeBf119a6CB87e2E221ed3cE8cFf35aB3c774",
+      address: roomContract.address,
       status: "WAITING",
       statusCode: 0,
       round: 0,

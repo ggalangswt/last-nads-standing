@@ -1,6 +1,16 @@
-import { createPublicClient, createWalletClient, http, getContract } from "viem";
+import { createPublicClient, createWalletClient, http, getContract, parseEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { opsContracts } from "./contracts.js";
+
+const DEMO_DUMMY_PRIVATE_KEYS = [
+  "0x0000000000000000000000000000000000000000000000000000000000000001",
+  "0x0000000000000000000000000000000000000000000000000000000000000002",
+  "0x0000000000000000000000000000000000000000000000000000000000000003",
+  "0x0000000000000000000000000000000000000000000000000000000000000004",
+  "0x0000000000000000000000000000000000000000000000000000000000000005",
+  "0x0000000000000000000000000000000000000000000000000000000000000006",
+  "0x0000000000000000000000000000000000000000000000000000000000000007",
+];
 
 // Keeper service for executing rounds
 export class KeeperService {
@@ -55,6 +65,14 @@ export class KeeperService {
     });
   }
 
+  getMockUsdcContract(client = this.publicClient) {
+    return getContract({
+      address: opsContracts.mockUsdc.address,
+      abi: opsContracts.mockUsdc.abi,
+      client,
+    });
+  }
+
   async configureDemoDefaults() {
     if (!this.walletClient) {
       return { success: false, reason: "Keeper wallet not configured" };
@@ -86,6 +104,69 @@ export class KeeperService {
       };
     } catch (error) {
       return { success: false, error: error.message };
+    }
+  }
+
+  getDemoAccounts() {
+    return DEMO_DUMMY_PRIVATE_KEYS.map((privateKey) => privateKeyToAccount(privateKey));
+  }
+
+  async bootstrapDemoRoom(roomAddress, requiredPlayers = 8) {
+    if (!this.walletClient) {
+      return { success: false, reason: "Keeper wallet not configured", roomAddress };
+    }
+
+    try {
+      const roomContract = this.getRoomContract(roomAddress);
+      const gameInfo = await roomContract.read.getGameInfo();
+      const totalPlayers = Number(gameInfo.totalPlayers);
+      if (totalPlayers >= requiredPlayers) {
+        return { success: true, roomAddress, seeded: 0, skipped: true };
+      }
+
+      const entryFee = BigInt(gameInfo.entryFee);
+      const demoAccounts = this.getDemoAccounts();
+      const mockUsdc = this.getMockUsdcContract(this.walletClient);
+      let seeded = 0;
+
+      for (const account of demoAccounts) {
+        const playerInfo = await roomContract.read.getPlayerInfo([account.address]).catch(() => ({
+          hasJoined: false,
+        }));
+        if (playerInfo.hasJoined) continue;
+
+        const seedWallet = createWalletClient({
+          account,
+          chain: this.chain,
+          transport: http(this.rpcUrl),
+        });
+        const seedRoomContract = this.getRoomContract(roomAddress, seedWallet);
+        const seedUsdcContract = this.getMockUsdcContract(seedWallet);
+
+        const topUp = parseEther("0.05");
+        const keeperBalance = await this.publicClient.getBalance({ address: this.account.address });
+        if (keeperBalance > topUp) {
+          await this.walletClient.sendTransaction({
+            to: account.address,
+            value: topUp,
+          });
+        }
+
+        const balance = await seedUsdcContract.read.balanceOf([account.address]);
+        if (balance === 0n) {
+          try {
+            await seedUsdcContract.write.faucet();
+          } catch {}
+        }
+
+        await seedUsdcContract.write.approve([roomAddress, entryFee]);
+        await seedRoomContract.write.joinRoom();
+        seeded += 1;
+      }
+
+      return { success: true, roomAddress, seeded };
+    } catch (error) {
+      return { success: false, error: error.message, roomAddress };
     }
   }
 
