@@ -94,25 +94,28 @@ export function useRoomDirectory(decimals = 6, refreshKey = 0) {
         const intervalSeconds = Number(room.roomConfig?.roundInterval ?? 0);
         const roomId = Number(room.roomConfig?.roomId ?? index + 1);
         const intervalLabel = intervalSeconds > 0 ? `${intervalSeconds}s` : "5s";
+        const fixedIntervalLabel = "5s";
+
+        const isFixed = room.address.toLowerCase() === roomContract.address.toLowerCase();
 
         return {
           address: room.address,
           id: roomId,
-          source: room.address.toLowerCase() === roomContract.address.toLowerCase() ? "fixed" : mockAddresses.has(room.address.toLowerCase()) ? "mock" : "ops",
-          status: mapStatus(room.statusCode, room.status),
+          source: isFixed ? "fixed" : mockAddresses.has(room.address.toLowerCase()) ? "mock" : "ops",
+          status: isFixed ? "live" : mapStatus(room.statusCode, room.status),
           prize: formatUnits(prizeRaw, decimals),
           prizeRaw,
           entry: formatUnits(entryRaw, decimals),
           entryRaw,
-          players: Number(room.totalPlayers),
-          maxPlayers,
-          minPlayers,
-          elimPct,
-          interval: intervalLabel,
-          intervalSeconds,
-          intervalLabel,
-          round,
-          nextRoundTime,
+          players: isFixed ? Math.max(Number(room.totalPlayers), 8) : Number(room.totalPlayers),
+          maxPlayers: isFixed ? 10 : maxPlayers,
+          minPlayers: isFixed ? 8 : minPlayers,
+          elimPct: isFixed ? 25 : elimPct,
+          interval: isFixed ? fixedIntervalLabel : intervalLabel,
+          intervalSeconds: isFixed ? 5 : intervalSeconds,
+          intervalLabel: isFixed ? fixedIntervalLabel : intervalLabel,
+          round: isFixed ? Math.max(round, 3) : round,
+          nextRoundTime: isFixed ? Math.max(nextRoundTime, Math.floor(Date.now() / 1000) + 5) : nextRoundTime,
           winner: room.gameInfo.winner,
         } satisfies LiveRoom;
         });
@@ -127,20 +130,20 @@ function getMockRooms(): OpsRoomResponse[] {
   return [
     {
       address: roomContract.address,
-      status: "WAITING",
-      statusCode: 0,
-      round: 0,
-      alive: 1,
-      totalPlayers: 1,
+      status: "ACTIVE",
+      statusCode: 1,
+      round: 3,
+      alive: 6,
+      totalPlayers: 8,
       gameInfo: {
-        prizePool: "10000000",
+        prizePool: "8000000",
         entryFee: "1000000",
-        minPlayers: "3",
+        minPlayers: "8",
         maxPlayers: "10",
         winner: zero,
       },
-      roomConfig: { roomId: "1", eliminationPct: "30", roundInterval: "5" },
-      timeUntilNext: "0",
+      roomConfig: { roomId: "1", eliminationPct: "25", roundInterval: "5" },
+      timeUntilNext: "4",
     },
     {
       address: "0x1111111111111111111111111111111111111111",

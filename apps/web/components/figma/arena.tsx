@@ -68,6 +68,35 @@ type ArenaSnapshot = {
   }[];
 };
 
+const DEMO_ROOM_ID = "1";
+const DEMO_ROOM_ADDRESS = "0xaddbeBf119a6CB87e2E221ed3cE8cFf35aB3c774" as const;
+const DEMO_ENTRY_RAW = 1_000_000n;
+const DEMO_MIN_PLAYERS = 8n;
+const DEMO_MAX_PLAYERS = 10n;
+const DEMO_INTERVAL_SECONDS = 5;
+const DEMO_ELIMINATION_PCT = 25;
+
+function buildDemoPlayers() {
+  return [
+    "0xa11ce00000000000000000000000000000000001",
+    "0xb0b0000000000000000000000000000000000002",
+    "0xc0de000000000000000000000000000000000003",
+    "0xd00d000000000000000000000000000000000004",
+    "0xe1e1000000000000000000000000000000000005",
+    "0xf00d000000000000000000000000000000000006",
+    "0xabc0000000000000000000000000000000000007",
+    "0xdef0000000000000000000000000000000000008",
+  ] as string[];
+}
+
+function buildDemoAlive(players: string[], roundsElapsed: number) {
+  const eliminatedCount = Math.min(
+    players.length - 1,
+    Math.max(0, Math.floor(roundsElapsed * (players.length * (DEMO_ELIMINATION_PCT / 100)))),
+  );
+  return players.slice(eliminatedCount);
+}
+
 export function Arena({ roomId }: ArenaProps) {
   const showShieldUi = false;
   const router = useRouter();
@@ -92,19 +121,19 @@ export function Arena({ roomId }: ArenaProps) {
 
   const decimals = Number(decimalsQuery.data ?? 6);
   const demoSnapshot = useMemo<ArenaSnapshot | null>(() => {
-    if (roomId !== "1") return null;
+    if (roomId !== DEMO_ROOM_ID) return null;
 
     const players = buildDemoPlayers();
     const elapsed = Math.max(0, now - demoStartedAt);
-    const roundsElapsed = Math.floor(elapsed / 5);
-    const countdown = 5 - (elapsed % 5 || 5);
+    const roundsElapsed = Math.floor(elapsed / DEMO_INTERVAL_SECONDS);
+    const countdown = DEMO_INTERVAL_SECONDS - (elapsed % DEMO_INTERVAL_SECONDS || DEMO_INTERVAL_SECONDS);
     const alivePlayers = buildDemoAlive(players, roundsElapsed);
     const eliminatedPlayers = players.filter((player) => !alivePlayers.includes(player));
     const winner = alivePlayers.length === 1 ? alivePlayers[0] : "0x0000000000000000000000000000000000000000";
     const status = alivePlayers.length === 1 ? 2 : 1;
 
     return {
-      roomAddress: "0xaddbeBf119a6CB87e2E221ed3cE8cFf35aB3c774",
+      roomAddress: DEMO_ROOM_ADDRESS,
       gameInfo: {
         status,
         currentRound: BigInt(roundsElapsed),
@@ -114,9 +143,9 @@ export function Arena({ roomId }: ArenaProps) {
         winner,
         lastRoundTime: BigInt(now - (elapsed % 5)),
         nextRoundTime: BigInt(now + countdown),
-        entryFee: BigInt(1_000_000),
-        minPlayers: BigInt(8),
-        maxPlayers: BigInt(10),
+        entryFee: DEMO_ENTRY_RAW,
+        minPlayers: DEMO_MIN_PLAYERS,
+        maxPlayers: DEMO_MAX_PLAYERS,
       },
       allPlayers: players,
       alivePlayers,
@@ -134,7 +163,7 @@ export function Arena({ roomId }: ArenaProps) {
   const roomData = roomQuery.data ?? demoSnapshot;
   const gameInfo = roomData?.gameInfo;
   const rawTimer = gameInfo ? Math.max(0, Number(gameInfo.nextRoundTime) - now) : 0;
-  const timer = rawTimer > 0 ? rawTimer : 12;
+  const timer = rawTimer > 0 ? rawTimer : DEMO_INTERVAL_SECONDS;
   const imminent = rawTimer > 0 && rawTimer <= 3;
   const alive = gameInfo ? Number(gameInfo.playersAlive) : 0;
   const eliminated = gameInfo ? Number(gameInfo.totalPlayers) - Number(gameInfo.playersAlive) : 0;
@@ -169,7 +198,7 @@ export function Arena({ roomId }: ArenaProps) {
         }))),
       ]
     : [
-        { id: 1, type: "round", title: roomId === "1" && !roomQuery.data ? "Demo room running..." : roomQuery.isLoading ? "Loading room..." : `Room ${roomId} live on-chain`, time: "now" },
+        { id: 1, type: "round", title: roomId === DEMO_ROOM_ID ? "Demo room running..." : roomQuery.isLoading ? "Loading room..." : `Room ${roomId} live on-chain`, time: "now" },
         { id: 2, type: "start", title: `${alive} players still alive`, time: `${round} rounds` },
         ...(players.filter((player) => player.state === "eliminated").slice(0, 3).map((player, index) => ({
           id: index + 3,
