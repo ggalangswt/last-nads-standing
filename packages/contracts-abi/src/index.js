@@ -1,40 +1,45 @@
-import { abi as gameFactoryAbi } from './abi/GameFactory.js';
-import { abi as gameRoomAbi } from './abi/GameRoom.js';
-import { abi as mockUsdcAbi } from './abi/MockUSDC.js';
-import { abi as predictionPoolAbi } from './abi/PredictionPool.js';
-import { monadTestnetAddresses } from './addresses/monad-testnet.js';
+import gameFactoryAbi from "./abi/GameFactory.js";
+import gameRoomAbi from "./abi/GameRoom.js";
+import mockUsdcAbi from "./abi/MockUSDC.js";
+import predictionPoolAbi from "./abi/PredictionPool.js";
+import monadTestnetAddresses from "./addresses/monad-testnet.js";
 
-export { gameFactoryAbi, gameRoomAbi, mockUsdcAbi, predictionPoolAbi, monadTestnetAddresses };
+export const addresses = {
+  monadTestnet: monadTestnetAddresses,
+};
+
+export const abis = {
+  gameFactory: gameFactoryAbi,
+  gameRoom: gameRoomAbi,
+  mockUsdc: mockUsdcAbi,
+  predictionPool: predictionPoolAbi,
+};
+
+function makeContractConfig(contractMeta, abi) {
+  return {
+    address: contractMeta.proxy,
+    proxyAddress: contractMeta.proxy,
+    implementationAddress: contractMeta.implementation,
+    abi,
+  };
+}
 
 export const monadTestnet = {
   chainId: monadTestnetAddresses.chainId,
   contracts: {
-    mockUsdc: {
-      address: monadTestnetAddresses.contracts.mockUsdc.proxy,
-      implementation: monadTestnetAddresses.contracts.mockUsdc.implementation,
-      abi: mockUsdcAbi,
+    mockUsdc: makeContractConfig(monadTestnetAddresses.contracts.mockUsdc, mockUsdcAbi),
+    factory: makeContractConfig(monadTestnetAddresses.contracts.factory, gameFactoryAbi),
+    predictionPool: makeContractConfig(monadTestnetAddresses.contracts.predictionPool, predictionPoolAbi),
+    demoRoom: makeContractConfig(monadTestnetAddresses.contracts.demoRoom, gameRoomAbi),
+    keeper: {
+      address: monadTestnetAddresses.contracts.keeper.address,
     },
-    factory: {
-      address: monadTestnetAddresses.contracts.factory.proxy,
-      implementation: monadTestnetAddresses.contracts.factory.implementation,
-      abi: gameFactoryAbi,
+    treasury: {
+      address: monadTestnetAddresses.contracts.treasury.address,
     },
-    predictionPool: {
-      address: monadTestnetAddresses.contracts.predictionPool.proxy,
-      implementation: monadTestnetAddresses.contracts.predictionPool.implementation,
-      abi: predictionPoolAbi,
-    },
-    demoRoom: {
-      address: monadTestnetAddresses.contracts.demoRoom.proxy,
-      implementation: monadTestnetAddresses.contracts.demoRoom.implementation,
-      abi: gameRoomAbi,
-    },
-    keeper: monadTestnetAddresses.contracts.keeper,
-    treasury: monadTestnetAddresses.contracts.treasury,
   },
-  metadata: monadTestnetAddresses.metadata,
 };
 
 export function getMonadContractConfig(name) {
-  return monadTestnet.contracts[name] ?? null;
+  return monadTestnet.contracts[name];
 }

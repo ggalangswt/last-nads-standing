@@ -3,8 +3,6 @@ export const dynamic = "force-dynamic";
 import { Arena } from "@/components/figma/arena";
 import { Spectate } from "@/components/figma/spectate";
 
-export const dynamic = "force-dynamic";
-
 export default async function ArenaPage({
   params,
   searchParams,

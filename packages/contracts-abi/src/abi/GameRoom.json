@@ -1,4 +1,4 @@
-const abi = [
+[
   {
     "type": "constructor",
     "inputs": [
@@ -1225,5 +1225,4 @@ const abi = [
     "name": "ZeroAddress",
     "inputs": []
   }
-];
-export default abi;
+]

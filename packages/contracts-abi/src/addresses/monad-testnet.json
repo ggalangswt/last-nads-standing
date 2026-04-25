@@ -1,0 +1,31 @@
+{
+  "chainId": 10143,
+  "contracts": {
+    "mockUsdc": {
+      "proxy": "0xEb9D52718442f3A7Bfc7a31bf6D834232a796760",
+      "implementation": "0x32E5299Ab6A7Cd06F3815767b2eD602C6C356c5F"
+    },
+    "factory": {
+      "proxy": "0x6267646B062C3Cae3c66ECfFc2151f148aec448B",
+      "implementation": null
+    },
+    "predictionPool": {
+      "proxy": "0x899aA02ff07e9F6147f5B627b69b8E0CBe8dB85A",
+      "implementation": null
+    },
+    "demoRoom": {
+      "proxy": "0xaddbeBf119a6CB87e2E221ed3cE8cFf35aB3c774",
+      "implementation": null
+    },
+    "keeper": {
+      "address": "0x090cD890fFf732d913E9f277137a50F3822efB15"
+    },
+    "treasury": {
+      "address": "0x090cD890fFf732d913E9f277137a50F3822efB15"
+    }
+  },
+  "metadata": {
+    "vrfCoordinator": "0x021E8a22bcC83466C20105B1F0Add7274d1ec721",
+    "mockVrfCoordinator": "0x021E8a22bcC83466C20105B1F0Add7274d1ec721"
+  }
+}

@@ -1,4 +1,4 @@
-const abi = [
+[
   {
     "type": "constructor",
     "inputs": [
@@ -14,19 +14,6 @@ const abi = [
       }
     ],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "BETTING_CLOSE_BPS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -429,5 +416,4 @@ const abi = [
       }
     ]
   }
-];
-export default abi;
+]

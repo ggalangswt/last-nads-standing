@@ -1,11 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
+import type { Abi } from "viem";
+import { maxUint256 } from "viem";
+import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContract, usePublicClient } from "wagmi";
 
 import { SearchIcon, SlidersHorizontalIcon } from "@/components/figma/icons";
 import { RoomCard, type RoomStatus } from "@/components/figma/room-card";
-import { mockRooms, type MockRoom } from "@/lib/mock/rooms";
+import { mockUsdcContract, roomContract } from "@/lib/contracts/config";
+import { getErrorMessage, switchToMonadNetwork } from "@/lib/network";
+import { useRoomDirectory, type LiveRoom } from "@/lib/room-data";
+import { monadTestnetChain } from "@/lib/wagmi/chain";
 
 const FILTERS: { key: "all" | RoomStatus; label: string }[] = [
   { key: "all", label: "All Rooms" },
@@ -17,16 +24,147 @@ const FILTERS: { key: "all" | RoomStatus; label: string }[] = [
 export function Lobby({
   onCreateRoom,
   onJoin,
+  onRoomsLoaded,
   onSpectate,
+  refreshKey = 0,
 }: {
   onCreateRoom?: () => void;
   onJoin?: (roomId: number) => void;
+  onRoomsLoaded?: (rooms: LiveRoom[]) => void;
   onSpectate?: (roomId: number) => void;
+  refreshKey?: number;
 }) {
   const router = useRouter();
   const [filter, setFilter] = useState<"all" | RoomStatus>("all");
+  const [actionRoomId, setActionRoomId] = useState<number | null>(null);
+  const [actionType, setActionType] = useState<"approve" | "join" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const rooms = useMemo(() => mockRooms.map(mapRoom).filter((room) => filter === "all" || room.status === filter), [filter]);
+  const { address, chain, isConnected } = useAccount();
+  const isOnMonad = chain?.id === monadTestnetChain.id;
+  const decimalsQuery = useReadContract({
+    ...mockUsdcContract,
+    chainId: monadTestnetChain.id,
+    functionName: "decimals",
+  });
+  const roomsQuery = useRoomDirectory(Number(decimalsQuery.data ?? 6), refreshKey);
+  const liveRooms = roomsQuery.data ?? [];
+
+  const { data: writeHash, error: writeError, isPending: isWritePending, writeContract } = useWriteContract();
+  const { isSuccess: txSuccess, isLoading: isReceiptLoading } = useWaitForTransactionReceipt({ hash: writeHash });
+
+  const publicClient = usePublicClient({ chainId: monadTestnetChain.id });
+
+  const rooms = useMemo(
+    () => (filter === "all" ? liveRooms : liveRooms.filter((room) => room.status === filter)),
+    [filter, liveRooms],
+  );
+
+  useEffect(() => {
+    if (roomsQuery.data) onRoomsLoaded?.(roomsQuery.data);
+  }, [onRoomsLoaded, roomsQuery.data]);
+
+  const roomWalletStateQuery = useQuery({
+    enabled: Boolean(publicClient && address && liveRooms.length),
+    queryKey: ["room-wallet-state", address, liveRooms.map((room) => room.address).join(",")],
+    queryFn: async () => {
+      if (!publicClient || !address) {
+        return {
+          allowances: {} as Record<number, bigint>,
+          joined: {} as Record<number, boolean>,
+        };
+      }
+
+      const allowanceResults = await publicClient.multicall({
+        allowFailure: false,
+        contracts: liveRooms.map((room) => ({
+          address: mockUsdcContract.address,
+          abi: mockUsdcContract.abi as Abi,
+          functionName: "allowance",
+          args: [address, room.address],
+        })),
+      });
+
+      const playerResults = await publicClient.multicall({
+        allowFailure: false,
+        contracts: liveRooms.map((room) => ({
+          address: room.address,
+          abi: roomContract.abi as Abi,
+          functionName: "getPlayerInfo",
+          args: [address],
+        })),
+      });
+
+      return {
+        allowances: Object.fromEntries(
+          liveRooms.map((room, index) => [room.id, allowanceResults[index] as bigint]),
+        ) as Record<number, bigint>,
+        joined: Object.fromEntries(
+          liveRooms.map((room, index) => {
+            const player = playerResults[index] as { hasJoined: boolean };
+            return [room.id, player.hasJoined];
+          }),
+        ) as Record<number, boolean>,
+      };
+    },
+    refetchInterval: 8000,
+  });
+
+  const roomAllowances: Record<number, bigint> = roomWalletStateQuery.data?.allowances ?? {};
+  const roomJoined: Record<number, boolean> = roomWalletStateQuery.data?.joined ?? {};
+
+  useEffect(() => {
+    if (!txSuccess) return;
+    void roomsQuery.refetch();
+    void roomWalletStateQuery.refetch();
+    if (actionType === "join" && actionRoomId) {
+      onJoin ? onJoin(actionRoomId) : router.push(`/arena/${actionRoomId}`);
+    }
+  }, [actionRoomId, actionType, onJoin, roomWalletStateQuery, roomsQuery, router, txSuccess]);
+
+  const handlePrimaryAction = async (room: LiveRoom) => {
+    setActionError(null);
+    setActionRoomId(room.id);
+    if (!isConnected || !address) return;
+    if (!isOnMonad) {
+      try {
+        await switchToMonadNetwork();
+      } catch (error) {
+        setActionError(getErrorMessage(error) || "Failed to switch network.");
+      }
+      return;
+    }
+    if (room.status !== "waiting") {
+      onSpectate ? onSpectate(room.id) : router.push(`/arena/${room.id}?mode=spectate`);
+      return;
+    }
+    if (roomJoined[room.id]) {
+      onJoin ? onJoin(room.id) : router.push(`/arena/${room.id}`);
+      return;
+    }
+    const allowance = roomAllowances[room.id] ?? BigInt(0);
+    try {
+      if (allowance < room.entryRaw) {
+        setActionType("approve");
+        writeContract({
+          ...mockUsdcContract,
+          chainId: monadTestnetChain.id,
+          functionName: "approve",
+          args: [room.address, maxUint256],
+        });
+        return;
+      }
+      setActionType("join");
+      writeContract({
+        ...roomContract,
+        address: room.address,
+        chainId: monadTestnetChain.id,
+        functionName: "joinRoom",
+      });
+    } catch (error) {
+      setActionError(getErrorMessage(error) || "Failed to submit room action.");
+    }
+  };
 
   return (
     <section className="relative flex-1 overflow-auto">
@@ -64,8 +202,17 @@ export function Lobby({
               className="mt-2 max-w-[520px] text-white/50"
               style={{ fontFamily: "Space Grotesk, sans-serif", fontSize: "14px", lineHeight: 1.6 }}
             >
-              Join a live room, wait in queue, or spectate a match in progress. Everything here is UI-only for the commit branch.
+              Join an active room, queue for the next round, or spectate a live match. All rooms
+              are non-custodial and settled on Monad.
             </p>
+            {actionError || writeError ? (
+              <div
+                className="mt-3 text-[#ff9aaa]"
+                style={{ fontFamily: "Space Grotesk, sans-serif", fontSize: "12px" }}
+              >
+                {actionError || getErrorMessage(writeError) || "Room action failed."}
+              </div>
+            ) : null}
           </div>
 
           <div className="flex items-center gap-2">
@@ -88,8 +235,8 @@ export function Lobby({
             const active = filter === filterOption.key;
             const count =
               filterOption.key === "all"
-                ? rooms.length
-                : rooms.filter((room) => room.status === filterOption.key).length;
+                ? liveRooms.length
+                : liveRooms.filter((room) => room.status === filterOption.key).length;
 
             return (
               <button
@@ -126,11 +273,22 @@ export function Lobby({
           {rooms.map((room) => (
             <RoomCard
               key={room.id}
-              onJoin={() => void (onJoin ? onJoin(Number(room.id)) : router.push(`/arena/${room.id}`))}
+              onJoin={() => void handlePrimaryAction(room)}
               onSpectate={() =>
-                onSpectate ? onSpectate(Number(room.id)) : router.push(`/arena/${room.id}?mode=spectate`)
+                onSpectate ? onSpectate(room.id) : router.push(`/arena/${room.id}?mode=spectate`)
               }
-              primaryLabel={room.status === "FINISHED" ? "CLOSED" : room.status === "LIVE NOW" ? "WATCH" : "JOIN ROOM"}
+              primaryDisabled={isWritePending || isReceiptLoading ? actionRoomId !== room.id : undefined}
+              primaryLabel={getPrimaryLabel({
+                actionRoomId,
+                address,
+                isConnected,
+                isOnMonad,
+                joined: roomJoined[room.id],
+                loading: isWritePending || isReceiptLoading,
+                room,
+                roomAllowance: roomAllowances[room.id] ?? BigInt(0),
+                actionType,
+              })}
               room={room}
             />
           ))}
@@ -140,23 +298,41 @@ export function Lobby({
           className="mt-10 text-center text-white/30 uppercase tracking-[0.3em]"
           style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px" }}
         >
-          — UI-only mock rooms —
+          {roomsQuery.isLoading ? "— Loading rooms —" : "— Live contract rooms —"}
         </div>
       </div>
     </section>
   );
 }
 
-function mapRoom(room: MockRoom) {
-  return {
-    id: Number(room.id),
-    status: room.status === "LIVE NOW" ? "live" : room.status === "WAITING" ? "waiting" : "finished",
-    prize: room.prizePool,
-    entry: room.entry,
-    players: room.players,
-    maxPlayers: room.maxPlayers,
-    elimPct: Number(room.eliminationRate.replace("%", "")),
-    interval: `${room.roundSeconds}s`,
-    round: undefined,
-  } as const;
+function getPrimaryLabel({
+  actionRoomId,
+  address,
+  isConnected,
+  isOnMonad,
+  joined,
+  loading,
+  room,
+  roomAllowance,
+  actionType,
+}: {
+  actionRoomId: number | null;
+  address?: string;
+  isConnected: boolean;
+  isOnMonad: boolean;
+  joined?: boolean;
+  loading: boolean;
+  room: LiveRoom;
+  roomAllowance: bigint;
+  actionType: "approve" | "join" | null;
+}) {
+  if (room.status === "finished") return "CLOSED";
+  if (!isConnected || !address) return "CONNECT";
+  if (!isOnMonad) return "SWITCH";
+  if (room.status === "live") return "WATCH";
+  if (joined) return "ENTER";
+  if (loading && actionRoomId === room.id) {
+    return actionType === "approve" ? "APPROVING..." : "JOINING...";
+  }
+  return roomAllowance < room.entryRaw ? "APPROVE USDC" : "JOIN ROOM";
 }

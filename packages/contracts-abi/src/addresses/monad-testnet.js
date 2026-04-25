@@ -1,4 +1,4 @@
-export const monadTestnetAddresses = {
+const addresses = {
   "chainId": 10143,
   "contracts": {
     "mockUsdc": {
@@ -25,9 +25,13 @@ export const monadTestnetAddresses = {
     }
   },
   "metadata": {
+<<<<<<< HEAD
     "vrfCoordinator": "0x82E0fA3e38e25aDA8689a4beC833A93b5A99A15E",
     "mockVrfCoordinator": "0x82E0fA3e38e25aDA8689a4beC833A93b5A99A15E"
+=======
+    "vrfCoordinator": "0x021E8a22bcC83466C20105B1F0Add7274d1ec721",
+    "mockVrfCoordinator": "0x021E8a22bcC83466C20105B1F0Add7274d1ec721"
+>>>>>>> 56e44afab76ef7d7c565cc77b5ed4bfa26680e59
   }
 };
-
-export default monadTestnetAddresses;
+export default addresses;
