@@ -20,6 +20,10 @@ const statusIntervalMs = Number(process.env.GAME_STATUS_INTERVAL_MS || 5000);
 const maxListedRooms = Number(process.env.MAX_LISTED_ROOMS || 8);
 const autoStartGames = process.env.AUTO_START_GAMES !== "false";
 const demoEntryFee = process.env.DEMO_ENTRY_FEE || "1";
+const allowedOrigins = (process.env.CORS_ORIGIN || "*")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 const app = express();
 const httpServer = createServer(app);
@@ -82,7 +86,23 @@ app.set("json replacer", (_key, value) => {
   return value;
 });
 
-app.use(cors());
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`Not allowed by CORS: ${origin}`));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    optionsSuccessStatus: 204,
+  })
+);
+app.options("*", cors());
 app.use(morgan("dev"));
 app.use(express.json());
 

@@ -43,12 +43,38 @@ type Player = {
   state: "alive" | "eliminated" | "you";
 };
 
+type ArenaSnapshot = {
+  roomAddress: string;
+  gameInfo: {
+    status: number;
+    currentRound: bigint;
+    prizePool: bigint;
+    playersAlive: bigint;
+    totalPlayers: bigint;
+    winner: string;
+    lastRoundTime: bigint;
+    nextRoundTime: bigint;
+    entryFee: bigint;
+    minPlayers: bigint;
+    maxPlayers: bigint;
+  };
+  allPlayers: string[];
+  alivePlayers: string[];
+  players: {
+    address: string;
+    hasJoined: boolean;
+    isAlive: boolean;
+    eliminatedAtRound: number;
+  }[];
+};
+
 export function Arena({ roomId }: ArenaProps) {
   const showShieldUi = false;
   const router = useRouter();
   const [createOpen, setCreateOpen] = useState(false);
   const [howOpen, setHowOpen] = useState(false);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  const [demoStartedAt] = useState(() => Math.floor(Date.now() / 1000) - 6);
   const { address } = useAccount();
   const roomQuery = useRoomState(roomId);
   const decimalsQuery = useReadContract({
@@ -65,7 +91,48 @@ export function Arena({ roomId }: ArenaProps) {
   }, []);
 
   const decimals = Number(decimalsQuery.data ?? 6);
-  const gameInfo = roomQuery.data?.gameInfo;
+  const demoSnapshot = useMemo<ArenaSnapshot | null>(() => {
+    if (roomId !== "1") return null;
+
+    const players = buildDemoPlayers();
+    const elapsed = Math.max(0, now - demoStartedAt);
+    const roundsElapsed = Math.floor(elapsed / 5);
+    const countdown = 5 - (elapsed % 5 || 5);
+    const alivePlayers = buildDemoAlive(players, roundsElapsed);
+    const eliminatedPlayers = players.filter((player) => !alivePlayers.includes(player));
+    const winner = alivePlayers.length === 1 ? alivePlayers[0] : "0x0000000000000000000000000000000000000000";
+    const status = alivePlayers.length === 1 ? 2 : 1;
+
+    return {
+      roomAddress: "0xaddbeBf119a6CB87e2E221ed3cE8cFf35aB3c774",
+      gameInfo: {
+        status,
+        currentRound: BigInt(roundsElapsed),
+        prizePool: BigInt(players.length * 1_000_000),
+        playersAlive: BigInt(alivePlayers.length),
+        totalPlayers: BigInt(players.length),
+        winner,
+        lastRoundTime: BigInt(now - (elapsed % 5)),
+        nextRoundTime: BigInt(now + countdown),
+        entryFee: BigInt(1_000_000),
+        minPlayers: BigInt(8),
+        maxPlayers: BigInt(10),
+      },
+      allPlayers: players,
+      alivePlayers,
+      players: players.map((player, index) => ({
+        address: player,
+        hasJoined: true,
+        isAlive: alivePlayers.includes(player),
+        eliminatedAtRound: alivePlayers.includes(player)
+          ? 0
+          : Math.max(1, Math.ceil((index + 1) / 2)),
+      })),
+    };
+  }, [demoStartedAt, now, roomId]);
+
+  const roomData = roomQuery.data ?? demoSnapshot;
+  const gameInfo = roomData?.gameInfo;
   const rawTimer = gameInfo ? Math.max(0, Number(gameInfo.nextRoundTime) - now) : 0;
   const timer = rawTimer > 0 ? rawTimer : 12;
   const imminent = rawTimer > 0 && rawTimer <= 3;
@@ -75,7 +142,7 @@ export function Arena({ roomId }: ArenaProps) {
   const round = gameInfo ? Number(gameInfo.currentRound) : 0;
   const players = useMemo<Player[]>(
     () =>
-      (roomQuery.data?.players ?? []).map((player, index) => ({
+      (roomData?.players ?? []).map((player, index) => ({
         id: index + 1,
         addr: formatWallet(player.address),
         roundOut: player.eliminatedAtRound || undefined,
@@ -88,7 +155,7 @@ export function Arena({ roomId }: ArenaProps) {
               ? "alive"
               : "eliminated",
       })),
-    [address, roomQuery.data?.players],
+    [address, roomData?.players],
   );
 
   const rawFeed: FeedEvent[] = imminent
@@ -102,7 +169,7 @@ export function Arena({ roomId }: ArenaProps) {
         }))),
       ]
     : [
-        { id: 1, type: "round", title: roomQuery.isLoading ? "Loading room..." : `Room ${roomId} live on-chain`, time: "now" },
+        { id: 1, type: "round", title: roomId === "1" && !roomQuery.data ? "Demo room running..." : roomQuery.isLoading ? "Loading room..." : `Room ${roomId} live on-chain`, time: "now" },
         { id: 2, type: "start", title: `${alive} players still alive`, time: `${round} rounds` },
         ...(players.filter((player) => player.state === "eliminated").slice(0, 3).map((player, index) => ({
           id: index + 3,
@@ -232,7 +299,7 @@ export function Arena({ roomId }: ArenaProps) {
             </div>
 
             <div className="mt-6 flex gap-2">
-              {roomQuery.isLoading ? (
+              {roomQuery.isLoading && !demoSnapshot ? (
                 <div className="rounded-[10px] border border-white/10 bg-white/5 px-3 py-2 text-white/70" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px" }}>
                   Loading room...
                 </div>
