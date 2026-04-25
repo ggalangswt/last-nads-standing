@@ -17,7 +17,7 @@ export default function HomePage() {
   const router = useRouter();
   const [createOpen, setCreateOpen] = useState(false);
   const [howOpen, setHowOpen] = useState(false);
-  const [view, setView] = useState<"landing" | "lobby" | "faucet">("landing");
+  const [view, setView] = useState<"landing" | "lobby" | "faucet">("lobby");
   const [roomRefreshKey, setRoomRefreshKey] = useState(0);
   const [rooms, setRooms] = useState<LiveRoom[]>([]);
 

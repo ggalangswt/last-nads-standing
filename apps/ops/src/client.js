@@ -2,7 +2,7 @@
 // Can be used by the frontend to get real-time updates and game data
 
 export class OpsClient {
-  constructor(httpUrl = "http://localhost:3001", wsUrl = httpUrl) {
+  constructor(httpUrl = "https://ops-production-edd1.up.railway.app", wsUrl = httpUrl) {
     this.httpUrl = httpUrl;
     this.wsUrl = wsUrl;
     this.socket = null;
