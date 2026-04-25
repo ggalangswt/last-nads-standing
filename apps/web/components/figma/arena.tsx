@@ -90,11 +90,12 @@ function buildDemoPlayers() {
 }
 
 function buildDemoAlive(players: string[], roundsElapsed: number) {
-  const eliminatedCount = Math.min(
-    players.length - 1,
-    Math.max(0, Math.floor(roundsElapsed * (players.length * (DEMO_ELIMINATION_PCT / 100)))),
-  );
-  return players.slice(eliminatedCount);
+  let alive = [...players];
+  for (let round = 0; round < roundsElapsed && alive.length > 1; round += 1) {
+    const eliminations = Math.max(1, Math.ceil(alive.length * (DEMO_ELIMINATION_PCT / 100)));
+    alive = alive.slice(eliminations);
+  }
+  return alive;
 }
 
 export function Arena({ roomId }: ArenaProps) {
@@ -128,7 +129,6 @@ export function Arena({ roomId }: ArenaProps) {
     const roundsElapsed = Math.floor(elapsed / DEMO_INTERVAL_SECONDS);
     const countdown = DEMO_INTERVAL_SECONDS - (elapsed % DEMO_INTERVAL_SECONDS || DEMO_INTERVAL_SECONDS);
     const alivePlayers = buildDemoAlive(players, roundsElapsed);
-    const eliminatedPlayers = players.filter((player) => !alivePlayers.includes(player));
     const winner = alivePlayers.length === 1 ? alivePlayers[0] : "0x0000000000000000000000000000000000000000";
     const status = alivePlayers.length === 1 ? 2 : 1;
 
@@ -141,7 +141,7 @@ export function Arena({ roomId }: ArenaProps) {
         playersAlive: BigInt(alivePlayers.length),
         totalPlayers: BigInt(players.length),
         winner,
-        lastRoundTime: BigInt(now - (elapsed % 5)),
+        lastRoundTime: BigInt(now - (elapsed % DEMO_INTERVAL_SECONDS)),
         nextRoundTime: BigInt(now + countdown),
         entryFee: DEMO_ENTRY_RAW,
         minPlayers: DEMO_MIN_PLAYERS,
@@ -160,7 +160,7 @@ export function Arena({ roomId }: ArenaProps) {
     };
   }, [demoStartedAt, now, roomId]);
 
-  const roomData = roomQuery.data ?? demoSnapshot;
+  const roomData = demoSnapshot ?? roomQuery.data;
   const gameInfo = roomData?.gameInfo;
   const rawTimer = gameInfo ? Math.max(0, Number(gameInfo.nextRoundTime) - now) : 0;
   const timer = rawTimer > 0 ? rawTimer : DEMO_INTERVAL_SECONDS;
