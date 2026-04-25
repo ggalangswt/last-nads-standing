@@ -2,6 +2,8 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
+import { parseUnits } from "viem";
+import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 
 import {
   CoinsIcon,
@@ -13,6 +15,9 @@ import {
   ZapIcon,
 } from "@/components/figma/icons";
 import { GameSlider } from "@/components/figma/slider";
+import { factoryContract, mockUsdcContract } from "@/lib/contracts/config";
+import { getErrorMessage, switchToMonadNetwork } from "@/lib/network";
+import { monadTestnetChain } from "@/lib/wagmi/chain";
 
 type CreateRoomModalProps = {
   onClose: () => void;
@@ -26,7 +31,45 @@ export function CreateRoomModal({ open, onClose, onCreated }: CreateRoomModalPro
   const [maxPlayers, setMaxPlayers] = useState(50);
   const [elimPct, setElimPct] = useState(20);
   const [interval, setInterval] = useState(12);
-  const [submitted, setSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [switching, setSwitching] = useState(false);
+
+  const { address, chain, isConnected } = useAccount();
+  const isOnMonad = chain?.id === monadTestnetChain.id;
+  const { data: writeHash, error: writeError, isPending: isWritePending, writeContract } = useWriteContract();
+  const { isLoading: isReceiptLoading, isSuccess: isCreateSuccess } = useWaitForTransactionReceipt({
+    hash: writeHash,
+  });
+
+  const decimalsQuery = useReadContract({
+    ...mockUsdcContract,
+    chainId: monadTestnetChain.id,
+    functionName: "decimals",
+  });
+
+  const defaultsQuery = useReadContract({
+    ...factoryContract,
+    chainId: monadTestnetChain.id,
+    functionName: "defaultMinPlayers",
+  });
+
+  const defaultMaxQuery = useReadContract({
+    ...factoryContract,
+    chainId: monadTestnetChain.id,
+    functionName: "defaultMaxPlayers",
+  });
+
+  const defaultElimQuery = useReadContract({
+    ...factoryContract,
+    chainId: monadTestnetChain.id,
+    functionName: "defaultEliminationPct",
+  });
+
+  const defaultIntervalQuery = useReadContract({
+    ...factoryContract,
+    chainId: monadTestnetChain.id,
+    functionName: "defaultRoundInterval",
+  });
 
   const estimatedPool = useMemo(() => Number((entryFee * maxPlayers).toFixed(2)), [entryFee, maxPlayers]);
   const estimatedRounds = useMemo(() => {
@@ -36,8 +79,19 @@ export function CreateRoomModal({ open, onClose, onCreated }: CreateRoomModalPro
 
   useEffect(() => {
     if (!open) return;
+    if (defaultsQuery.data) setMinPlayers(Number(defaultsQuery.data));
+    if (defaultMaxQuery.data) setMaxPlayers(Number(defaultMaxQuery.data));
+    if (defaultElimQuery.data) setElimPct(Number(defaultElimQuery.data));
+    if (defaultIntervalQuery.data) setInterval(Number(defaultIntervalQuery.data));
+  }, [defaultElimQuery.data, defaultIntervalQuery.data, defaultMaxQuery.data, defaultsQuery.data, open]);
+
+  useEffect(() => {
+    if (!open) return;
+
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        onClose();
+      }
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -45,19 +99,56 @@ export function CreateRoomModal({ open, onClose, onCreated }: CreateRoomModalPro
   }, [open, onClose]);
 
   useEffect(() => {
-    if (!open) {
-      setSubmitted(false);
+    if (!isCreateSuccess) return;
+    onCreated?.();
+    onClose();
+  }, [isCreateSuccess, onClose, onCreated]);
+
+  if (!open) {
+    return null;
+  }
+
+  const decimals = Number(decimalsQuery.data ?? 6);
+  const submitLabel = !isConnected
+    ? "CONNECT WALLET"
+    : !isOnMonad
+      ? "SWITCH TO MONAD"
+      : switching || isWritePending || isReceiptLoading
+        ? "DEPLOYING..."
+        : "DEPLOY ROOM";
+
+  const onSubmit = async () => {
+    if (!isConnected || !address) return;
+    setSubmitError(null);
+
+    if (!isOnMonad) {
+      setSwitching(true);
+      try {
+        await switchToMonadNetwork();
+      } catch (error) {
+        setSubmitError(getErrorMessage(error) || "Failed to switch network.");
+      } finally {
+        setSwitching(false);
+      }
+      return;
     }
-  }, [open]);
 
-  if (!open) return null;
-
-  const onSubmit = () => {
-    setSubmitted(true);
-    window.setTimeout(() => {
-      onCreated?.();
-      onClose();
-    }, 450);
+    try {
+      writeContract({
+        ...factoryContract,
+        chainId: monadTestnetChain.id,
+        functionName: "createRoom",
+        args: [
+          parseUnits(entryFee.toString(), decimals),
+          BigInt(minPlayers),
+          BigInt(maxPlayers),
+          BigInt(elimPct),
+          BigInt(interval),
+        ],
+      });
+    } catch (error) {
+      setSubmitError(getErrorMessage(error) || "Failed to submit room creation.");
+    }
   };
 
   return (
@@ -110,7 +201,7 @@ export function CreateRoomModal({ open, onClose, onCreated }: CreateRoomModalPro
                 className="mt-1 max-w-[380px] text-white/50"
                 style={{ fontFamily: "Space Grotesk, sans-serif", fontSize: "13px", lineHeight: 1.5 }}
               >
-                Configure your survival room. This branch keeps the modal UI only.
+                Configure your survival room. Smart contract deploys instantly on Monad.
               </p>
             </div>
           </div>
@@ -144,86 +235,148 @@ export function CreateRoomModal({ open, onClose, onCreated }: CreateRoomModalPro
           />
 
           <div className="grid grid-cols-2 gap-5">
-            <GameSlider label="Min Players" max={Math.max(10, maxPlayers - 5)} min={5} onChange={setMinPlayers} value={minPlayers} />
-            <GameSlider label="Max Players" max={100} min={Math.min(minPlayers + 5, 50)} onChange={setMaxPlayers} value={maxPlayers} />
+            <GameSlider
+              label="Min Players"
+              max={Math.max(10, maxPlayers - 5)}
+              min={5}
+              onChange={setMinPlayers}
+              value={minPlayers}
+            />
+            <GameSlider
+              label="Max Players"
+              max={100}
+              min={Math.min(minPlayers + 5, 50)}
+              onChange={setMaxPlayers}
+              value={maxPlayers}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-5">
-            <GameSlider hint="Pace of the match" label="Elimination %" max={40} min={5} onChange={setElimPct} suffix="%" value={elimPct} />
-            <GameSlider hint="Seconds between cuts" label="Round Interval" max={20} min={5} onChange={setInterval} suffix="s" value={interval} />
-          </div>
-
-          <div
-            className="rounded-[16px] border border-[#f5b544]/50 bg-[linear-gradient(135deg,rgba(245,181,68,0.18),rgba(245,181,68,0.04))] p-4"
-            style={{ boxShadow: "0 0 30px rgba(245,181,68,0.15)" }}
-          >
-            <div className="flex items-center gap-2 text-[#f5b544] uppercase tracking-[0.25em]" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", fontWeight: 600 }}>
-              <CoinsIcon className="h-3.5 w-3.5" /> Estimated Prize Pool
-            </div>
-            <div
-              className="mt-1 text-[#f5b544]"
-              style={{ fontFamily: "Orbitron, sans-serif", fontSize: "28px", fontWeight: 800, letterSpacing: "-0.02em" }}
-            >
-              {estimatedPool.toFixed(2)} USDC
-            </div>
-            <div className="mt-2 flex flex-wrap gap-2 text-white/55" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px" }}>
-              <Tag>~{estimatedRounds || 1} rounds</Tag>
-              <Tag>{minPlayers}-{maxPlayers} players</Tag>
-              <Tag>{interval}s pace</Tag>
-            </div>
-          </div>
-
-          {submitted ? (
-            <div className="rounded-[12px] border border-[#22e4c7]/30 bg-[#22e4c7]/10 px-4 py-3 text-[#22e4c7]" style={{ fontFamily: "Space Grotesk, sans-serif", fontSize: "12px" }}>
-              Deployment preview saved. Closing modal...
-            </div>
-          ) : null}
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1.2fr]">
-            <button
-              className="h-11 rounded-[10px] border border-white/10 bg-white/[0.03] px-5 text-white/80 transition-colors hover:bg-white/[0.08] hover:text-white"
-              onClick={onClose}
-              style={{ fontFamily: "Space Grotesk, sans-serif", fontSize: "13px", fontWeight: 500 }}
-              type="button"
-            >
-              Cancel
-            </button>
-            <button
-              className="flex h-11 items-center justify-center gap-2 rounded-[10px] bg-[#6e56f9] text-white shadow-[0_0_24px_rgba(110,86,249,0.45)] transition-colors hover:bg-[#7d67ff]"
-              onClick={onSubmit}
-              style={{ fontFamily: "Orbitron, sans-serif", fontSize: "13px", fontWeight: 700, letterSpacing: "0.1em" }}
-              type="button"
-            >
-              <RocketIcon className="h-3.5 w-3.5" /> Deploy Room
-            </button>
+            <GameSlider
+              hint="Pace of the match"
+              label="Elimination %"
+              max={40}
+              min={5}
+              onChange={setElimPct}
+              suffix="%"
+              value={elimPct}
+            />
+            <GameSlider
+              hint="Tension between rounds"
+              label="Round Interval"
+              max={30}
+              min={5}
+              onChange={setInterval}
+              suffix="s"
+              value={interval}
+            />
           </div>
         </div>
+
+        <div className="px-6 pb-6">
+          <div
+            className="relative overflow-hidden rounded-[14px] border p-4"
+            style={{
+              borderColor: "rgba(110,86,249,0.35)",
+              background: "linear-gradient(120deg, rgba(110,86,249,0.18), rgba(110,86,249,0.04))",
+              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)",
+            }}
+          >
+            <div
+              className="pointer-events-none absolute -right-8 -top-8 h-28 w-28 rounded-full"
+              style={{ background: "radial-gradient(circle, rgba(110,86,249,0.35), transparent 70%)" }}
+            />
+            <div className="relative flex items-center justify-between">
+              <div>
+                <div
+                  className="flex items-center gap-1.5 text-[#b9aaff] uppercase tracking-[0.25em]"
+                  style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", fontWeight: 600 }}
+                >
+                  <CoinsIcon className="h-3 w-3" /> Estimated Prize Pool
+                </div>
+                <div
+                  className="mt-1 text-white"
+                  style={{
+                    fontFamily: "Orbitron, sans-serif",
+                    fontSize: "30px",
+                    fontWeight: 800,
+                    letterSpacing: "-0.01em",
+                    textShadow: "0 0 24px rgba(110,86,249,0.55)",
+                  }}
+                >
+                  {estimatedPool} <span className="text-[#6e56f9]">USDC</span>
+                </div>
+              </div>
+              <div className="flex flex-col items-end gap-1.5">
+                <Summary icon={<UsersIcon className="h-3 w-3" />} value={`${maxPlayers} max`} />
+                <Summary icon={<TimerIcon className="h-3 w-3" />} value={`~${estimatedRounds} rounds`} />
+                <Summary icon={<TimerIcon className="h-3 w-3" />} value={`${interval}s / round`} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5 px-6 pb-6">
+          <button
+            className="h-11 rounded-[10px] border border-white/10 bg-white/[0.03] px-5 text-white/80 transition-colors hover:bg-white/[0.08] hover:text-white"
+            onClick={onClose}
+            style={{ fontFamily: "Space Grotesk, sans-serif", fontSize: "13px", fontWeight: 500 }}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            className="group flex h-11 flex-1 items-center justify-center gap-2 rounded-[10px] bg-[#6e56f9] text-white shadow-[0_0_24px_rgba(110,86,249,0.45)] transition-colors hover:bg-[#7d67ff]"
+            disabled={switching || isWritePending || isReceiptLoading}
+            onClick={onSubmit}
+            style={{ fontFamily: "Orbitron, sans-serif", fontSize: "13px", fontWeight: 700, letterSpacing: "0.1em" }}
+            type="button"
+          >
+            <RocketIcon className="h-4 w-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            {submitLabel}
+          </button>
+        </div>
+        {submitError || writeError ? (
+          <div
+            className="px-6 pb-6 text-[#ff9aaa]"
+            style={{ fontFamily: "Space Grotesk, sans-serif", fontSize: "12px" }}
+          >
+            {submitError || getErrorMessage(writeError) || "Room deployment failed."}
+          </div>
+        ) : null}
       </div>
+    </div>
+  );
+}
+
+function Chip({ icon, children }: { icon: ReactNode; children: ReactNode }) {
+  return (
+    <div
+      className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-white/60"
+      style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", letterSpacing: "0.15em" }}
+    >
+      {icon}
+      <span className="uppercase">{children}</span>
+    </div>
+  );
+}
+
+function Summary({ icon, value }: { icon: ReactNode; value: string }) {
+  return (
+    <div
+      className="flex items-center gap-1.5 text-white/70"
+      style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px" }}
+    >
+      {icon} {value}
     </div>
   );
 }
 
 function Cross({ style }: { style: CSSProperties }) {
   return (
-    <div className="absolute h-3 w-3" style={style}>
-      <span className="absolute bottom-0 left-1/2 top-0 w-px -translate-x-1/2 bg-[#6e56f9]/60" />
-      <span className="absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 bg-[#6e56f9]/60" />
+    <div className="pointer-events-none absolute h-2.5 w-2.5" style={style}>
+      <span className="absolute bottom-0 left-1/2 top-0 w-px -translate-x-1/2 bg-[#6e56f9]/50" />
+      <span className="absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 bg-[#6e56f9]/50" />
     </div>
   );
-}
-
-function Chip({ children, icon }: { children: ReactNode; icon: ReactNode }) {
-  return (
-    <span
-      className="inline-flex items-center gap-1.5 rounded-full border border-white/8 bg-white/[0.03] px-2.5 py-1 text-white/70"
-      style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px", fontWeight: 500 }}
-    >
-      {icon}
-      {children}
-    </span>
-  );
-}
-
-function Tag({ children }: { children: ReactNode }) {
-  return <span className="rounded-full border border-white/10 bg-black/30 px-2 py-1">{children}</span>;
 }

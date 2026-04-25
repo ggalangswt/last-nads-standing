@@ -6,20 +6,23 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { CreateRoomModal } from "@/components/figma/create-room-modal";
+import { Faucet } from "@/components/figma/faucet";
 import { Hero } from "@/components/figma/hero";
 import { HowItWorksModal } from "@/components/figma/how-it-works-modal";
 import { Lobby } from "@/components/figma/lobby";
 import { TopNav } from "@/components/figma/top-nav";
-import { mockRooms } from "@/lib/mock/rooms";
+import type { LiveRoom } from "@/lib/room-data";
 
 export default function HomePage() {
   const router = useRouter();
   const [createOpen, setCreateOpen] = useState(false);
   const [howOpen, setHowOpen] = useState(false);
-  const [view, setView] = useState<"landing" | "lobby">("landing");
+  const [view, setView] = useState<"landing" | "lobby" | "faucet">("landing");
+  const [roomRefreshKey, setRoomRefreshKey] = useState(0);
+  const [rooms, setRooms] = useState<LiveRoom[]>([]);
 
-  const liveCount = mockRooms.filter((room) => room.status !== "FINISHED").length;
-  const onlineCount = mockRooms.reduce((total, room) => total + room.players, 0);
+  const liveCount = rooms.filter((room) => room.status !== "finished").length;
+  const onlineCount = rooms.reduce((total, room) => total + room.players, 0);
 
   return (
     <div className="min-h-screen w-full bg-[#07070b] text-white">
@@ -27,30 +30,32 @@ export default function HomePage() {
 
       <div className="relative z-10 flex min-h-screen flex-col">
         <TopNav
-          liveCount={liveCount}
-          onlineCount={onlineCount}
+          liveCount={liveCount || 12}
+          onlineCount={onlineCount || 2384}
           onCreateRoom={() => setCreateOpen(true)}
-          onFaucet={() => router.push("/faucet")}
+          onFaucet={() => setView("faucet")}
           onHome={() => setView("landing")}
           onHowItWorks={() => setHowOpen(true)}
           onPlay={() => setView("lobby")}
           variant={view}
         />
-
         {view === "landing" ? (
           <div className="flex flex-1 flex-col" style={{ minHeight: "calc(100vh - 73px)" }}>
             <Hero onHowItWorks={() => setHowOpen(true)} onPlay={() => setView("lobby")} />
           </div>
+        ) : view === "faucet" ? (
+          <Faucet onBack={() => setView("lobby")} />
         ) : (
           <Lobby
             onCreateRoom={() => setCreateOpen(true)}
             onJoin={(roomId) => router.push(`/arena/${roomId}`)}
+            onRoomsLoaded={setRooms}
             onSpectate={(roomId) => router.push(`/arena/${roomId}?mode=spectate`)}
+            refreshKey={roomRefreshKey}
           />
         )}
       </div>
-
-      <CreateRoomModal onClose={() => setCreateOpen(false)} open={createOpen} />
+      <CreateRoomModal onClose={() => setCreateOpen(false)} onCreated={() => setRoomRefreshKey((current) => current + 1)} open={createOpen} />
       <HowItWorksModal onClose={() => setHowOpen(false)} open={howOpen} />
     </div>
   );

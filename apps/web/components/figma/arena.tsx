@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { formatUnits } from "viem";
+import { useAccount, useReadContract } from "wagmi";
 
 import {
   ActivityIcon,
@@ -17,7 +19,9 @@ import {
 import { CreateRoomModal } from "@/components/figma/create-room-modal";
 import { HowItWorksModal } from "@/components/figma/how-it-works-modal";
 import { TopNav } from "@/components/figma/top-nav";
-import { createMockMatch, shortAddress } from "@/lib/mock/match";
+import { mockUsdcContract } from "@/lib/contracts/config";
+import { formatWallet } from "@/lib/network";
+import { useRoomState } from "@/lib/room-state";
 
 type ArenaProps = {
   roomId: string;
@@ -45,6 +49,13 @@ export function Arena({ roomId }: ArenaProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const [howOpen, setHowOpen] = useState(false);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  const { address } = useAccount();
+  const roomQuery = useRoomState(roomId);
+  const decimalsQuery = useReadContract({
+    ...mockUsdcContract,
+    chainId: 10143,
+    functionName: "decimals",
+  });
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -53,32 +64,54 @@ export function Arena({ roomId }: ArenaProps) {
     return () => window.clearInterval(id);
   }, []);
 
-  const rawTimer = 12 - (now % 12);
-  const imminent = rawTimer <= 3;
-  const match = useMemo(() => createMockMatch(roomId, imminent, "arena"), [imminent, roomId]);
+  const decimals = Number(decimalsQuery.data ?? 6);
+  const gameInfo = roomQuery.data?.gameInfo;
+  const rawTimer = gameInfo ? Math.max(0, Number(gameInfo.nextRoundTime) - now) : 0;
+  const timer = rawTimer > 0 ? rawTimer : 12;
+  const imminent = rawTimer > 0 && rawTimer <= 3;
+  const alive = gameInfo ? Number(gameInfo.playersAlive) : 0;
+  const eliminated = gameInfo ? Number(gameInfo.totalPlayers) - Number(gameInfo.playersAlive) : 0;
+  const prize = gameInfo ? formatUnits(gameInfo.prizePool, decimals) : "0";
+  const round = gameInfo ? Number(gameInfo.currentRound) : 0;
   const players = useMemo<Player[]>(
     () =>
-      match.players.map((player) => ({
-        id: player.id,
-        addr: shortAddress(player.address),
-        roundOut: player.roundOut || undefined,
-        shield: player.shield,
-        shieldUsed: player.shieldUsed,
-        state: player.state,
+      (roomQuery.data?.players ?? []).map((player, index) => ({
+        id: index + 1,
+        addr: formatWallet(player.address),
+        roundOut: player.eliminatedAtRound || undefined,
+        shield: false,
+        shieldUsed: false,
+        state:
+          address && player.address.toLowerCase() === address.toLowerCase()
+            ? "you"
+            : player.isAlive
+              ? "alive"
+              : "eliminated",
       })),
-    [match.players],
+    [address, roomQuery.data?.players],
   );
 
-  const feed = useMemo<FeedEvent[]>(
-    () =>
-      match.feed.filter((event) => showShieldUi || event.type !== "shield").map((event) => ({
-        id: event.id,
-        time: event.time,
-        title: event.title,
-        type: event.type === "milestone" ? "start" : event.type,
-      })),
-    [match.feed, showShieldUi],
-  );
+  const rawFeed: FeedEvent[] = imminent
+    ? [
+        { id: 1, type: "round", title: `Round ${round + 1} incoming...`, time: `${timer}s` },
+        ...(players.filter((player) => player.state === "eliminated").slice(0, 2).map((player, index) => ({
+          id: index + 2,
+          type: "elim" as const,
+          title: `${player.addr} eliminated in Round ${player.roundOut ?? round}`,
+          time: "recent",
+        }))),
+      ]
+    : [
+        { id: 1, type: "round", title: roomQuery.isLoading ? "Loading room..." : `Room ${roomId} live on-chain`, time: "now" },
+        { id: 2, type: "start", title: `${alive} players still alive`, time: `${round} rounds` },
+        ...(players.filter((player) => player.state === "eliminated").slice(0, 3).map((player, index) => ({
+          id: index + 3,
+          type: "elim" as const,
+          title: `${player.addr} eliminated in Round ${player.roundOut ?? round}`,
+          time: "recent",
+        }))),
+      ];
+  const feed = rawFeed.filter((event) => showShieldUi || event.type !== "shield");
 
   return (
     <div className="min-h-screen w-full bg-[#07070b] text-white">
@@ -90,7 +123,7 @@ export function Arena({ roomId }: ArenaProps) {
           onFaucet={() => router.push("/faucet")}
           onHome={() => router.push("/")}
           onHowItWorks={() => setHowOpen(true)}
-          onlineCount={match.alive}
+          onlineCount={alive}
           variant="arena"
         />
 
@@ -117,11 +150,11 @@ export function Arena({ roomId }: ArenaProps) {
 
             <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-6">
               <MetricCard label="Room" value={`#${String(roomId).padStart(3, "0")}`} />
-              <MetricCard accent="#a274ff" label="Round" value={String(match.round)} />
-              <MetricCard accent="#2ef7a0" label="Alive" value={String(match.alive)} />
-              <MetricCard accent="#ff5353" label="Eliminated" value={String(match.eliminated)} />
-              <MetricCard accent="#ffbe3b" label="Prize Pool" value={`${match.prize} USDC`} />
-              <CountdownCard imminent={imminent} seconds={rawTimer} />
+              <MetricCard accent="#a274ff" label="Round" value={String(round)} />
+              <MetricCard accent="#2ef7a0" label="Alive" value={String(alive)} />
+              <MetricCard accent="#ff5353" label="Eliminated" value={String(eliminated)} />
+              <MetricCard accent="#ffbe3b" label="Prize Pool" value={`${prize} USDC`} />
+              <CountdownCard imminent={imminent} seconds={timer} />
             </div>
 
             {imminent ? (
@@ -159,8 +192,11 @@ export function Arena({ roomId }: ArenaProps) {
                   >
                     <UsersIcon className="h-3 w-3" /> Player Arena
                   </div>
-                  <div className="text-white/45" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "12px" }}>
-                    {match.alive}/{players.length} alive
+                  <div
+                    className="text-white/45"
+                    style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "12px" }}
+                  >
+                    {alive}/{players.length} alive
                   </div>
                 </div>
 
@@ -196,9 +232,16 @@ export function Arena({ roomId }: ArenaProps) {
             </div>
 
             <div className="mt-6 flex gap-2">
-              <div className="rounded-[10px] border border-white/10 bg-white/5 px-3 py-2 text-white/70" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px" }}>
-                UI-only mock arena
-              </div>
+              {roomQuery.isLoading ? (
+                <div className="rounded-[10px] border border-white/10 bg-white/5 px-3 py-2 text-white/70" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px" }}>
+                  Loading room...
+                </div>
+              ) : null}
+              {roomQuery.error ? (
+                <div className="rounded-[10px] border border-[#ff5d70]/20 bg-[#ff5d70]/10 px-3 py-2 text-[#ff9aaa]" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px" }}>
+                  {(roomQuery.error as Error).message}
+                </div>
+              ) : null}
               <button
                 className="rounded-[10px] border border-white/10 bg-white/5 px-3 py-2 text-white/70"
                 onClick={() => setNow(Math.floor(Date.now() / 1000))}
@@ -213,6 +256,8 @@ export function Arena({ roomId }: ArenaProps) {
           <style>{`
             @keyframes arenaPulse { 0%,100% { opacity:0.6 } 50% { opacity:1 } }
             @keyframes bannerShake { from { transform: translateX(-1px) } to { transform: translateX(1px) } }
+            @keyframes tileGlow { 0%,100% { box-shadow: 0 0 0 1px rgba(34,228,199,0.4), 0 0 16px rgba(34,228,199,0.3) } 50% { box-shadow: 0 0 0 1px rgba(34,228,199,0.6), 0 0 24px rgba(34,228,199,0.5) } }
+            @keyframes dangerGlow { 0%,100% { box-shadow: 0 0 0 1px rgba(255,59,92,0.4), 0 0 16px rgba(255,59,92,0.3) } 50% { box-shadow: 0 0 0 1px rgba(255,59,92,0.7), 0 0 28px rgba(255,59,92,0.5) } }
           `}</style>
         </section>
       </div>
@@ -251,13 +296,7 @@ function MetricCard({
       </div>
       <div
         className="mt-1 text-white"
-        style={{
-          fontFamily: "Orbitron, sans-serif",
-          fontSize: "18px",
-          fontWeight: 700,
-          letterSpacing: "-0.01em",
-          color: accent === "#ffffff" ? "#fff" : accent,
-        }}
+        style={{ fontFamily: "Orbitron, sans-serif", fontSize: "18px", fontWeight: 700, letterSpacing: "-0.01em", color: accent === "#ffffff" ? "#fff" : accent }}
       >
         {value}
       </div>
@@ -266,7 +305,7 @@ function MetricCard({
 }
 
 function CountdownCard({ seconds, imminent }: { imminent: boolean; seconds: number }) {
-  const safeSeconds = Math.max(0, Math.min(seconds, 12));
+  const safeSeconds = Math.min(seconds, 12);
   const pct = (safeSeconds / 12) * 100;
   const color = imminent ? "#ff5353" : "#a274ff";
 
@@ -279,82 +318,118 @@ function CountdownCard({ seconds, imminent }: { imminent: boolean; seconds: numb
       }}
     >
       <svg className="-rotate-90" viewBox="0 0 40 40" style={{ height: "86px", width: "86px" }}>
-        <circle cx="20" cy="20" fill="none" r="16" stroke="rgba(255,255,255,0.08)" strokeWidth="3.5" />
+        <circle cx="20" cy="20" r="16" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
         <circle
           cx="20"
           cy="20"
           fill="none"
           r="16"
           stroke={color}
+          strokeDasharray={`${(pct / 100) * 100.5} 100.5`}
           strokeLinecap="round"
-          strokeWidth="3.5"
-          style={{
-            strokeDasharray: "100",
-            strokeDashoffset: `${100 - pct}`,
-            filter: `drop-shadow(0 0 6px ${color})`,
-            transition: "stroke-dashoffset 1s linear",
-          }}
+          strokeWidth="3"
+          style={{ filter: `drop-shadow(0 0 4px ${color})`, transition: "stroke-dasharray 0.9s linear" }}
         />
       </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <div className="text-white" style={{ fontFamily: "Orbitron, sans-serif", fontSize: "28px", fontWeight: 800, color }}>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <div
+          className="text-center"
+          style={{ fontFamily: "Orbitron, sans-serif", fontSize: "28px", fontWeight: 800, color }}
+        >
           {safeSeconds}
-        </div>
-        <div className="text-white/40" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "8px", letterSpacing: "0.24em" }}>
-          SEC
         </div>
       </div>
     </div>
   );
 }
 
-function PlayerTile({
-  player,
-  imminent,
-  showShieldUi,
-}: {
-  imminent: boolean;
-  player: Player;
-  showShieldUi: boolean;
-}) {
-  const active = player.state !== "eliminated";
-  const danger = imminent && active;
+function PlayerTile({ player, imminent, showShieldUi }: { imminent: boolean; player: Player; showShieldUi: boolean }) {
+  const isYou = player.state === "you";
+  const eliminated = player.state === "eliminated";
+  const alive = !eliminated;
+  const seed = (player.id * 9301 + 49297) % 233280;
+  const hue = (seed / 233280) * 360;
+
+  let borderColor = "rgba(255,255,255,0.08)";
+  let bg = "rgba(255,255,255,0.02)";
+  let textColor = "rgba(255,255,255,0.9)";
+  let animation = "none";
+
+  if (eliminated) {
+    bg = "rgba(10,10,14,0.35)";
+    textColor = "rgba(255,255,255,0.28)";
+  } else if (isYou) {
+    borderColor = "#9d6bff";
+    bg = "rgba(110,86,249,0.12)";
+  } else if (imminent && alive) {
+    animation = "dangerGlow 1.2s ease-in-out infinite";
+  } else if (alive) {
+    animation = "tileGlow 2.4s ease-in-out infinite";
+  }
 
   return (
     <div
-      className="relative flex h-[88px] flex-col items-center justify-between rounded-[12px] border p-2.5 transition-transform duration-300"
+      className="relative aspect-[1.1] rounded-[10px] p-2 transition-all"
       style={{
-        background: active ? "rgba(34,228,199,0.06)" : "rgba(255,255,255,0.02)",
-        borderColor: player.state === "you" ? "#a274ff" : active ? "rgba(34,228,199,0.25)" : "rgba(255,255,255,0.06)",
-        boxShadow: player.state === "you" ? "0 0 0 1px rgba(162,116,255,0.55), 0 0 18px rgba(162,116,255,0.25)" : danger ? "0 0 16px rgba(255,59,92,0.18)" : "0 0 0 1px rgba(255,255,255,0.02)",
-        opacity: active ? 1 : 0.45,
+        background: bg,
+        border: `1px solid ${borderColor}`,
+        animation,
       }}
     >
-      {player.state === "you" ? (
-        <div className="absolute -top-2 rounded-full bg-[#a274ff] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.18em] text-black">
-          You
+      <div className="flex h-full flex-col items-center justify-between">
+        <div className="w-full">
+          {isYou ? (
+            <span
+              className="absolute -top-1.5 left-1/2 -translate-x-1/2 rounded-[999px] bg-[#8f5dff] px-2 py-0.5 text-white"
+              style={{ fontFamily: "Orbitron, sans-serif", fontSize: "8px", fontWeight: 800, letterSpacing: "0.1em" }}
+            >
+              YOU
+            </span>
+          ) : null}
+          <div
+            className="mx-auto flex h-12 w-12 items-center justify-center"
+            style={{
+              clipPath: "polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)",
+              background: eliminated
+                ? "rgba(255,255,255,0.06)"
+                : isYou
+                  ? "linear-gradient(135deg, #8c6bff, #5a44f0)"
+                  : `linear-gradient(135deg, hsl(${hue} 85% 58%), hsl(${(hue + 30) % 360} 85% 52%))`,
+              opacity: eliminated ? 0.25 : 1,
+              filter: isYou ? "drop-shadow(0 0 6px #8c6bff)" : "none",
+            }}
+          >
+            <span
+              className="text-black"
+              style={{ fontFamily: "Orbitron, sans-serif", fontSize: "12px", fontWeight: 800, color: isYou ? "#1a142e" : "#052723" }}
+            >
+              {player.addr.slice(2, 4).toUpperCase()}
+            </span>
+          </div>
         </div>
-      ) : null}
-      <div
-        className="flex h-10 w-10 items-center justify-center rounded-[8px] text-white"
-        style={{
-          background: active ? "linear-gradient(135deg, #2ef7a0, #16c6b3)" : "rgba(255,255,255,0.08)",
-          boxShadow: active ? "0 0 12px rgba(34,228,199,0.45)" : "none",
-          color: player.state === "you" ? "#fff" : "#020202",
-          fontFamily: "Orbitron, sans-serif",
-          fontSize: "12px",
-          fontWeight: 800,
-        }}
-      >
-        {player.addr.slice(2, 4).toUpperCase()}
-      </div>
-      <div className="text-center">
-        <div className="text-white/85" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px" }}>
-          {player.addr}
-        </div>
-        <div className="mt-1 flex items-center justify-center gap-1.5 text-white/45" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px" }}>
-          {showShieldUi ? <ShieldIcon className="h-3 w-3" /> : null}
-          {player.state === "eliminated" ? `R${player.roundOut ?? 0}` : active ? "Alive" : "Out"}
+
+        <div className="text-center">
+          <div
+            style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: textColor }}
+          >
+            {player.addr}
+          </div>
+          {eliminated ? (
+            <div
+              className="mt-1 text-white/20"
+              style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px" }}
+            >
+              R{player.roundOut}
+            </div>
+          ) : showShieldUi ? (
+            <div className="mt-1 flex items-center justify-center gap-1">
+              {player.shield && !player.shieldUsed ? (
+                <ShieldIcon className="h-3 w-3 text-[#59c7ff]" />
+              ) : player.shieldUsed ? (
+                <ShieldIcon className="h-3 w-3 text-white/35" />
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -362,24 +437,45 @@ function PlayerTile({
 }
 
 function FeedCard({ event }: { event: FeedEvent }) {
-  const map =
-    event.type === "round"
-      ? { color: "#f5b544", bg: "rgba(245,181,68,0.08)", border: "rgba(245,181,68,0.25)", icon: <FlameIcon className="h-3.5 w-3.5" /> }
+  const tone =
+    event.type === "elim"
+      ? {
+          bg: "rgba(94,25,34,0.36)",
+          border: "rgba(255,84,84,0.42)",
+          icon: <SkullIcon className="h-4 w-4 text-[#ff6666]" />,
+          text: "#ff6868",
+        }
       : event.type === "shield"
-        ? { color: "#22e4c7", bg: "rgba(34,228,199,0.08)", border: "rgba(34,228,199,0.25)", icon: <ShieldIcon className="h-3.5 w-3.5" /> }
-        : event.type === "start"
-          ? { color: "#6e56f9", bg: "rgba(110,86,249,0.08)", border: "rgba(110,86,249,0.25)", icon: <ActivityIcon className="h-3.5 w-3.5" /> }
-          : { color: "#ff5353", bg: "rgba(255,59,92,0.08)", border: "rgba(255,59,92,0.25)", icon: <SkullIcon className="h-3.5 w-3.5" /> };
+        ? {
+            bg: "rgba(18,48,74,0.42)",
+            border: "rgba(73,170,255,0.38)",
+            icon: <ShieldIcon className="h-4 w-4 text-[#74c6ff]" />,
+            text: "#74c6ff",
+          }
+        : {
+            bg: "rgba(89,64,24,0.32)",
+            border: "rgba(245,181,68,0.35)",
+            icon: <FlameIcon className="h-4 w-4 text-[#ffb94d]" />,
+            text: "#ffb94d",
+          };
 
   return (
-    <div className="rounded-[12px] border p-3" style={{ background: map.bg, borderColor: map.border }}>
-      <div className="flex items-center gap-2">
-        <span style={{ color: map.color }}>{map.icon}</span>
-        <div className="flex-1">
-          <div className="text-white" style={{ fontFamily: "Space Grotesk, sans-serif", fontSize: "12.5px" }}>
+    <div
+      className="rounded-[16px] border p-4"
+      style={{ background: tone.bg, borderColor: tone.border }}
+    >
+      <div className="flex items-start gap-3">
+        <div className="pt-0.5">{tone.icon}</div>
+        <div className="min-w-0">
+          <div
+            style={{ fontFamily: "Space Grotesk, sans-serif", fontSize: "16px", fontWeight: 500, color: tone.text }}
+          >
             {event.title}
           </div>
-          <div className="mt-1 text-white/45" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px" }}>
+          <div
+            className="mt-1 text-white/55"
+            style={{ fontFamily: "Space Grotesk, sans-serif", fontSize: "14px" }}
+          >
             {event.time}
           </div>
         </div>

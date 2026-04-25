@@ -1,4 +1,4 @@
-const addresses = {
+{
   "chainId": 10143,
   "contracts": {
     "mockUsdc": {
@@ -28,5 +28,4 @@ const addresses = {
     "vrfCoordinator": "0x021E8a22bcC83466C20105B1F0Add7274d1ec721",
     "mockVrfCoordinator": "0x021E8a22bcC83466C20105B1F0Add7274d1ec721"
   }
-};
-export default addresses;
+}
