@@ -6,15 +6,24 @@
   "scripts": {
     "dev:web": "pnpm --filter web dev",
     "dev:ops": "pnpm --filter ops dev",
+    "remotion:preview": "remotion studio remotion/index.ts",
+    "remotion:render": "remotion render remotion/index.ts LastNadsStandingPromo out/last-nads-standing-promo.mp4",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "test": "turbo run test"
   },
   "devDependencies": {
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "typescript": "^5.8.3",
     "turbo": "^2.5.0"
   },
   "dependencies": {
     "@chainlink/contracts": "^1.5.0",
-    "@openzeppelin/contracts-upgradeable": "^5.6.1"
+    "@openzeppelin/contracts-upgradeable": "^5.6.1",
+    "@remotion/cli": "4.0.451",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "remotion": "4.0.451"
   }
 }
