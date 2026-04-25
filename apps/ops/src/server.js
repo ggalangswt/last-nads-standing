@@ -4,19 +4,22 @@ import express from "express";
 import morgan from "morgan";
 import { createServer } from "http";
 import { Server } from "socket.io";
-import { createPublicClient, getContract, http, isAddress } from "viem";
-import { monadTestnet } from "@last-nads-standing/contracts-abi";
+import { createPublicClient, getContract, http, isAddress, parseUnits } from "viem";
 import { KeeperService } from "./keeper.js";
 import { EventMonitor } from "./events.js";
+import { opsContracts } from "./contracts.js";
 
 dotenv.config();
 
 const rpcUrl = process.env.MONAD_RPC_URL || "https://testnet-rpc.monad.xyz";
 const port = Number(process.env.OPS_PORT || 3001);
+const host = process.env.OPS_HOST || "127.0.0.1";
 const cacheTtlMs = Number(process.env.CACHE_TTL || 5000);
 const keeperIntervalMs = Number(process.env.KEEPER_INTERVAL_MS || 5000);
 const statusIntervalMs = Number(process.env.GAME_STATUS_INTERVAL_MS || 5000);
+const maxListedRooms = Number(process.env.MAX_LISTED_ROOMS || 8);
 const autoStartGames = process.env.AUTO_START_GAMES !== "false";
+const demoEntryFee = process.env.DEMO_ENTRY_FEE || "1";
 
 const app = express();
 const httpServer = createServer(app);
@@ -29,7 +32,7 @@ const io = new Server(httpServer, {
 });
 
 const chain = {
-  id: monadTestnet.chainId,
+  id: opsContracts.chainId,
   name: "Monad Testnet",
   nativeCurrency: {
     name: "MON",
@@ -49,8 +52,8 @@ const publicClient = createPublicClient({
 });
 
 const factoryContract = getContract({
-  address: monadTestnet.contracts.factory.address,
-  abi: monadTestnet.contracts.factory.abi,
+  address: opsContracts.factory.address,
+  abi: opsContracts.factory.abi,
   client: publicClient,
 });
 
@@ -72,6 +75,7 @@ const invalidatingEvents = new Set([
 ]);
 
 let keeperTickInProgress = false;
+let demoRoomBootstrapInProgress = false;
 
 app.set("json replacer", (_key, value) => {
   if (typeof value === "bigint") return value.toString();
@@ -121,7 +125,7 @@ function validateAddressParam(address, res) {
 function getRoomContract(roomAddress) {
   return getContract({
     address: roomAddress,
-    abi: monadTestnet.contracts.demoRoom.abi,
+    abi: opsContracts.demoRoom.abi,
     client: publicClient,
   });
 }
@@ -144,6 +148,38 @@ function setCachedRoom(roomAddress, data) {
 function invalidateRoom(roomAddress) {
   if (roomAddress) {
     roomCache.delete(roomAddress.toLowerCase());
+  }
+}
+
+async function ensureDemoRoomExists() {
+  if (!keeperService.hasWallet || demoRoomBootstrapInProgress) {
+    return;
+  }
+
+  demoRoomBootstrapInProgress = true;
+
+  try {
+    const configured = await keeperService.configureDemoDefaults();
+    if (!configured.success) {
+      console.log("Demo room bootstrap: could not configure defaults:", configured.reason || configured.error);
+    }
+
+    const roomAddresses = await getRoomAddresses();
+    if (roomAddresses.length > 0) {
+      return;
+    }
+
+    const result = await keeperService.createDefaultRoom(parseUnits(demoEntryFee, 6));
+    if (result.success) {
+      roomCache.clear();
+      console.log(`Demo room bootstrap: created ${result.roomAddress || "new demo room"} tx=${result.transactionHash}`);
+    } else {
+      console.log("Demo room bootstrap: failed to create room:", result.reason || result.error);
+    }
+  } catch (error) {
+    console.error("Demo room bootstrap error:", error);
+  } finally {
+    demoRoomBootstrapInProgress = false;
   }
 }
 
@@ -180,25 +216,32 @@ async function getPlayerDetails(roomContract, playerAddresses) {
   return players;
 }
 
-async function getRoomInfo(roomAddress, { force = false } = {}) {
-  if (!force) {
+async function getRoomInfo(roomAddress, { force = false, includePlayers = false } = {}) {
+  if (!force && !includePlayers) {
     const cached = getCachedRoom(roomAddress);
     if (cached) return cached;
   }
 
   try {
     const roomContract = getRoomContract(roomAddress);
-    const [rawGameInfo, allPlayers, alivePlayers, canExecute, timeUntilNext] =
+    const [
+      rawGameInfo,
+      canExecute,
+      timeUntilNext,
+      roomId,
+      eliminationPct,
+      roundInterval,
+    ] =
       await Promise.all([
         roomContract.read.getGameInfo(),
-        roomContract.read.getAllPlayers(),
-        roomContract.read.getAlivePlayers(),
         roomContract.read.canExecuteRound(),
         roomContract.read.timeUntilNextRound(),
+        roomContract.read.roomId(),
+        roomContract.read.eliminationPct(),
+        roomContract.read.roundInterval(),
       ]);
 
     const gameInfo = normalizeGameInfo(rawGameInfo);
-    const playerDetails = await getPlayerDetails(roomContract, allPlayers);
     const roomData = {
       address: roomAddress,
       status: gameInfo.statusLabel,
@@ -207,24 +250,47 @@ async function getRoomInfo(roomAddress, { force = false } = {}) {
       alive: gameInfo.playersAlive,
       totalPlayers: gameInfo.totalPlayers,
       gameInfo,
-      players: playerDetails,
-      playerAddresses: toJsonValue(allPlayers),
-      alivePlayers: toJsonValue(alivePlayers),
+      roomConfig: {
+        roomId: roomId.toString(),
+        eliminationPct: eliminationPct.toString(),
+        roundInterval: roundInterval.toString(),
+      },
       canExecute,
       timeUntilNext: timeUntilNext.toString(),
       lastUpdated: Date.now(),
     };
 
-    setCachedRoom(roomAddress, roomData);
-    return roomData;
+    if (!includePlayers) {
+      setCachedRoom(roomAddress, roomData);
+      return roomData;
+    }
+
+    const [allPlayers, alivePlayers] = await Promise.all([
+      roomContract.read.getAllPlayers(),
+      roomContract.read.getAlivePlayers(),
+    ]);
+    const playerDetails = await getPlayerDetails(roomContract, allPlayers);
+
+    return {
+      ...roomData,
+      players: playerDetails,
+      playerAddresses: toJsonValue(allPlayers),
+      alivePlayers: toJsonValue(alivePlayers),
+    };
   } catch (error) {
     console.error(`Error fetching room info for ${roomAddress}:`, error);
     return null;
   }
 }
 
-async function getActiveRoomAddresses() {
-  return factoryContract.read.getActiveRooms();
+async function getRoomAddresses() {
+  const [activeRooms, waitingRooms] = await Promise.all([
+    factoryContract.read.getActiveRooms().catch(() => []),
+    factoryContract.read.getWaitingRooms().catch(() => []),
+  ]);
+
+  const roomAddresses = Array.from(new Set([...activeRooms, ...waitingRooms]));
+  return roomAddresses.slice(-maxListedRooms);
 }
 
 function getGameStatusPayload(roomInfo) {
@@ -243,7 +309,7 @@ function getGameStatusPayload(roomInfo) {
 }
 
 async function getActiveRoomsData({ force = false } = {}) {
-  const roomAddresses = await getActiveRoomAddresses();
+  const roomAddresses = await getRoomAddresses();
   const rooms = await Promise.all(
     roomAddresses.map((roomAddress) => getRoomInfo(roomAddress, { force }))
   );
@@ -257,6 +323,10 @@ async function broadcastGameStatuses() {
     rooms.forEach((roomInfo) => {
       broadcastUpdate("game_status", getGameStatusPayload(roomInfo));
     });
+
+    if (rooms.length === 0) {
+      await ensureDemoRoomExists();
+    }
   } catch (error) {
     console.error("Error broadcasting game status:", error);
   }
@@ -314,8 +384,11 @@ async function checkAndProgressGames() {
   keeperTickInProgress = true;
 
   try {
-    const activeRooms = await getActiveRoomAddresses();
+    const activeRooms = await getRoomAddresses();
     await Promise.all(activeRooms.map((roomAddress) => progressRoom(roomAddress)));
+    if (activeRooms.length === 0) {
+      await ensureDemoRoomExists();
+    }
   } catch (error) {
     console.error("Keeper: Error in game progress loop:", error);
   } finally {
@@ -356,7 +429,7 @@ app.get("/health", (_req, res) => {
     service: "ops",
     port,
     socketUrl: `http://localhost:${port}`,
-    chainId: monadTestnet.chainId,
+    chainId: opsContracts.chainId,
     keeperConfigured: keeperService.hasWallet,
     keeperIntervalMs,
     statusIntervalMs,
@@ -389,7 +462,7 @@ app.get("/", (_req, res) => {
 });
 
 app.get("/contracts", (_req, res) => {
-  res.json(monadTestnet);
+  res.json(opsContracts);
 });
 
 async function handleGetRooms(_req, res) {
@@ -410,7 +483,7 @@ async function handleGetRoom(req, res) {
   if (!validateAddressParam(address, res)) return;
 
   try {
-    const roomInfo = await getRoomInfo(address);
+    const roomInfo = await getRoomInfo(address, { includePlayers: true });
 
     if (!roomInfo) {
       return res.status(404).json({ error: "Room not found" });
@@ -428,7 +501,7 @@ async function handleGetPlayers(req, res) {
   if (!validateAddressParam(address, res)) return;
 
   try {
-    const roomInfo = await getRoomInfo(address);
+    const roomInfo = await getRoomInfo(address, { includePlayers: true });
 
     if (!roomInfo) {
       return res.status(404).json({ error: "Room not found" });
@@ -553,19 +626,22 @@ async function startEventMonitoring() {
   }
 }
 
-const keeperTimer = setInterval(checkAndProgressGames, keeperIntervalMs);
+const keeperTimer = keeperService.hasWallet ? setInterval(checkAndProgressGames, keeperIntervalMs) : null;
 const statusTimer = setInterval(broadcastGameStatuses, statusIntervalMs);
 
-httpServer.listen(port, () => {
-  console.log(`Ops HTTP + Socket.IO server listening on http://127.0.0.1:${port}`);
+httpServer.listen(port, host, () => {
+  console.log(`Ops HTTP + Socket.IO server listening on http://${host}:${port}`);
   startEventMonitoring();
-  setTimeout(checkAndProgressGames, 1000);
+  setTimeout(ensureDemoRoomExists, 1000);
+  if (keeperService.hasWallet) {
+    setTimeout(checkAndProgressGames, 1000);
+  }
   setTimeout(broadcastGameStatuses, 1500);
 });
 
 function shutdown() {
   console.log("Shutting down ops server...");
-  clearInterval(keeperTimer);
+  if (keeperTimer) clearInterval(keeperTimer);
   clearInterval(statusTimer);
   eventMonitor.stopAll();
   io.close();

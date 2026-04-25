@@ -51,30 +51,27 @@ export function useRoomState(roomId: string) {
         }),
       ]);
 
-      const playerInfos = await publicClient.multicall({
-        allowFailure: false,
-        contracts: (allPlayers as Address[]).map((player) => ({
+      const normalizedPlayers: RoomPlayerState[] = [];
+
+      for (const player of allPlayers as Address[]) {
+        const info = (await publicClient.readContract({
           address: roomAddress,
           abi: roomContract.abi as Abi,
           functionName: "getPlayerInfo",
           args: [player],
-        })),
-      });
-
-      const normalizedPlayers: RoomPlayerState[] = (allPlayers as Address[]).map((player, index) => {
-        const info = playerInfos[index] as {
+        })) as {
           hasJoined: boolean;
           isAlive: boolean;
           eliminatedAtRound: bigint;
         };
 
-        return {
+        normalizedPlayers.push({
           address: player,
           hasJoined: info.hasJoined,
           isAlive: info.isAlive,
           eliminatedAtRound: Number(info.eliminatedAtRound),
-        };
-      });
+        });
+      }
 
       return {
         roomAddress,

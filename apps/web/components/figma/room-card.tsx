@@ -22,6 +22,7 @@ export type Room = {
   maxPlayers: number;
   elimPct: number;
   interval: string;
+  intervalLabel?: string;
   round?: number;
 };
 
@@ -147,7 +148,7 @@ export function RoomCard({
 
       <div className="relative mt-4 grid grid-cols-2 gap-3">
         <Meta icon={<ZapIcon className="h-3 w-3" />} label="Elim %" value={`${room.elimPct}%`} />
-        <Meta icon={<TimerIcon className="h-3 w-3" />} label="Interval" value={room.interval} />
+        <Meta icon={<TimerIcon className="h-3 w-3" />} label="Interval" value={room.intervalLabel || room.interval} />
       </div>
 
       <div className="relative mt-5 grid grid-cols-[1fr_auto] gap-2">

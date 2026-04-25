@@ -1,6 +1,6 @@
 import { createPublicClient, createWalletClient, http, getContract } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { monadTestnet } from "@last-nads-standing/contracts-abi";
+import { opsContracts } from "./contracts.js";
 
 // Keeper service for executing rounds
 export class KeeperService {
@@ -8,7 +8,7 @@ export class KeeperService {
     this.rpcUrl = rpcUrl;
     this.privateKey = privateKey;
     this.chain = {
-      id: monadTestnet.chainId,
+      id: opsContracts.chainId,
       name: "Monad Testnet",
       nativeCurrency: {
         name: "MON",
@@ -42,9 +42,51 @@ export class KeeperService {
   getRoomContract(roomAddress, client = this.publicClient) {
     return getContract({
       address: roomAddress,
-      abi: monadTestnet.contracts.demoRoom.abi,
+      abi: opsContracts.demoRoom.abi,
       client,
     });
+  }
+
+  getFactoryContract(client = this.publicClient) {
+    return getContract({
+      address: opsContracts.factory.address,
+      abi: opsContracts.factory.abi,
+      client,
+    });
+  }
+
+  async configureDemoDefaults() {
+    if (!this.walletClient) {
+      return { success: false, reason: "Keeper wallet not configured" };
+    }
+
+    try {
+      const factoryContract = this.getFactoryContract(this.walletClient);
+      const hash = await factoryContract.write.updateDefaults([2n, 10n, 30n, 5n]);
+      await this.publicClient.waitForTransactionReceipt({ hash });
+      return { success: true, transactionHash: hash };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  async createDefaultRoom(entryFee) {
+    if (!this.walletClient) {
+      return { success: false, reason: "Keeper wallet not configured" };
+    }
+
+    try {
+      const factoryContract = this.getFactoryContract(this.walletClient);
+      const hash = await factoryContract.write.createDefaultRoom([entryFee]);
+      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+      return {
+        success: true,
+        transactionHash: hash,
+        blockNumber: receipt.blockNumber?.toString(),
+      };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   }
 
   async startGame(roomAddress) {
