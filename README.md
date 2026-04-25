@@ -105,3 +105,25 @@
   - Expand spectator gameplay and prediction interactions dan tajam untuk juri`
   - lebih formal/profesional
   - lebih hype untuk hackathon submission
+
+  ## Deployment
+
+  **Contract addresses (chainId: 10143)**
+
+  Berikut hanya alamat kontrak (satu per baris):
+
+  ```
+  0xDA116a9C27Ac644bC52180e76a7f8387F6054433
+  0x6AE008d846A82CE49011b9850975257e37759c5b
+  0xb11537815438AffDbD2419955806eC8A9f9F907f
+  0x65DB8a243Fa7E2768bB933c94C0b09C3Cc538FF2
+  0x2916C916c771Ff6bDC992830Ccf937Ec88822Be7
+  0x090cD890fFf732d913E9f277137a50F3822efB15
+  0x82E0fA3e38e25aDA8689a4beC833A93b5A99A15E
+  ```
+
+  **Front-end (demo / live)**: https://last-nads-standing-web.vercel.app/
+
+  Keterangan: front-end demo tersedia di URL di atas — gunakan untuk melihat
+  UI, daftar room, dan alur bermain. Pastikan wallet dan RPC diarahkan ke jaringan
+  yang sesuai (chainId `10143`) ketika mencoba interaksi onchain.
