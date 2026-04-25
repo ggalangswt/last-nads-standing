@@ -1,0 +1,14 @@
+{
+  "name": "@last-nads-standing/contracts-abi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./abi/GameFactory": "./src/abi/GameFactory.js",
+    "./abi/GameRoom": "./src/abi/GameRoom.js",
+    "./abi/MockUSDC": "./src/abi/MockUSDC.js",
+    "./abi/PredictionPool": "./src/abi/PredictionPool.js",
+    "./addresses/monad-testnet": "./src/addresses/monad-testnet.js"
+  }
+}
