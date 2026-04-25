@@ -17,6 +17,19 @@ export const abi = [
   },
   {
     "type": "function",
+    "name": "BETTING_CLOSE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MIN_BET",
     "inputs": [],
     "outputs": [

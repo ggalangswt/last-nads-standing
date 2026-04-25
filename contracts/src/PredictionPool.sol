@@ -12,6 +12,8 @@ import "./GameRoom.sol";
 ///         the pool proportionally to their stake.
 contract PredictionPool is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
+    uint256 public constant BETTING_CLOSE_BPS = 5_000; // 50.00%
+
     // ─────────────────────────────────────────────────────────────────────────
     // Structs
     // ─────────────────────────────────────────────────────────────────────────
@@ -105,11 +107,20 @@ contract PredictionPool is Ownable, ReentrancyGuard {
         require(!roomData[roomAddress].resolved, "PredictionPool: already resolved");
 
         GameRoom room = GameRoom(payable(roomAddress));
+        GameRoom.PlayerInfo memory bettorInfo = room.getPlayerInfo(msg.sender);
+        require(!bettorInfo.hasJoined, "PredictionPool: players cannot bet");
+
         GameRoom.GameStatus roomStatus = room.status();
         require(
             roomStatus == GameRoom.GameStatus.WAITING ||
             roomStatus == GameRoom.GameStatus.ACTIVE,
             "PredictionPool: game not open"
+        );
+
+        GameRoom.GameInfo memory gameInfo = room.getGameInfo();
+        require(
+            gameInfo.playersAlive * 10_000 > gameInfo.totalPlayers * BETTING_CLOSE_BPS,
+            "PredictionPool: betting window closed"
         );
 
         // Predicted winner must be a live participant

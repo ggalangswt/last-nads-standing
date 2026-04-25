@@ -81,6 +81,27 @@ contract PredictionPoolTest is Test {
         winnerAddr = room.winner();
     }
 
+    function _createRoomWithPlayers(
+        uint256 playerCount,
+        uint256 eliminationPct
+    ) internal returns (GameRoom customRoom) {
+        vm.startPrank(owner);
+        address roomAddr = factory.createRoom(ENTRY_FEE, playerCount, playerCount, eliminationPct, ROUND_INTERVAL);
+        vm.stopPrank();
+
+        customRoom = GameRoom(payable(roomAddr));
+
+        for (uint256 i = 0; i < playerCount; i++) {
+            address player = makeAddr(string(abi.encodePacked("custom-player", vm.toString(i), "-", vm.toString(eliminationPct))));
+            vm.prank(player);
+            mockUsdc.faucet();
+            vm.prank(player);
+            mockUsdc.approve(address(customRoom), ENTRY_FEE);
+            vm.prank(player);
+            customRoom.joinRoom();
+        }
+    }
+
     function test_placeBet_requiresApproval() public {
         vm.prank(spectator);
         vm.expectRevert(
@@ -118,6 +139,43 @@ contract PredictionPoolTest is Test {
             )
         );
         predictionPool.placeBet(address(room), players[0], BET_AMOUNT);
+    }
+
+    function test_placeBet_revertsForPlayers() public {
+        vm.prank(players[0]);
+        mockUsdc.approve(address(predictionPool), BET_AMOUNT);
+
+        vm.prank(players[0]);
+        vm.expectRevert("PredictionPool: players cannot bet");
+        predictionPool.placeBet(address(room), players[1], BET_AMOUNT);
+    }
+
+    function test_placeBet_revertsWhenAlivePlayersAtOrBelowHalf() public {
+        GameRoom customRoom = _createRoomWithPlayers(4, 50);
+
+        vm.prank(spectator);
+        mockUsdc.approve(address(predictionPool), BET_AMOUNT);
+
+        GameRoom.GameInfo memory gameInfo = customRoom.getGameInfo();
+        uint256 currentTime = block.timestamp;
+
+        while (gameInfo.status == GameRoom.GameStatus.ACTIVE && gameInfo.playersAlive > gameInfo.totalPlayers / 2) {
+            currentTime += ROUND_INTERVAL + 1;
+            vm.warp(currentTime);
+            vm.prank(keeper);
+            customRoom.executeRound();
+            mockVRF.fulfillRequest(customRoom.pendingRequestId());
+            gameInfo = customRoom.getGameInfo();
+        }
+
+        assertEq(gameInfo.totalPlayers, 4);
+        assertLe(gameInfo.playersAlive, gameInfo.totalPlayers / 2);
+
+        address[] memory alivePlayers = customRoom.getAlivePlayers();
+
+        vm.prank(spectator);
+        vm.expectRevert("PredictionPool: betting window closed");
+        predictionPool.placeBet(address(customRoom), alivePlayers[0], BET_AMOUNT);
     }
 
     function test_claimPredictionReward_transfersErc20() public {
