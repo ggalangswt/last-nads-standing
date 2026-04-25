@@ -48,7 +48,7 @@ export function Lobby({
     functionName: "decimals",
   });
   const roomsQuery = useRoomDirectory(Number(decimalsQuery.data ?? 6), refreshKey);
-  const liveRooms = roomsQuery.data ?? [];
+  const liveRooms = useMemo(() => roomsQuery.data ?? [], [roomsQuery.data]);
 
   const { data: writeHash, error: writeError, isPending: isWritePending, writeContract } = useWriteContract();
   const { isSuccess: txSuccess, isLoading: isReceiptLoading } = useWaitForTransactionReceipt({ hash: writeHash });
@@ -75,36 +75,32 @@ export function Lobby({
         };
       }
 
-      const allowanceResults = await publicClient.multicall({
-        allowFailure: false,
-        contracts: liveRooms.map((room) => ({
+      const allowances: Record<number, bigint> = {};
+      const joined: Record<number, boolean> = {};
+
+      for (const room of liveRooms) {
+        const allowance = await publicClient.readContract({
           address: mockUsdcContract.address,
           abi: mockUsdcContract.abi as Abi,
           functionName: "allowance",
           args: [address, room.address],
-        })),
-      });
+        });
 
-      const playerResults = await publicClient.multicall({
-        allowFailure: false,
-        contracts: liveRooms.map((room) => ({
+        allowances[room.id] = allowance as bigint;
+
+        const player = await publicClient.readContract({
           address: room.address,
           abi: roomContract.abi as Abi,
           functionName: "getPlayerInfo",
           args: [address],
-        })),
-      });
+        });
+
+        joined[room.id] = Boolean((player as { hasJoined: boolean }).hasJoined);
+      }
 
       return {
-        allowances: Object.fromEntries(
-          liveRooms.map((room, index) => [room.id, allowanceResults[index] as bigint]),
-        ) as Record<number, bigint>,
-        joined: Object.fromEntries(
-          liveRooms.map((room, index) => {
-            const player = playerResults[index] as { hasJoined: boolean };
-            return [room.id, player.hasJoined];
-          }),
-        ) as Record<number, boolean>,
+        allowances,
+        joined,
       };
     },
     refetchInterval: 8000,
@@ -117,10 +113,25 @@ export function Lobby({
     if (!txSuccess) return;
     void roomsQuery.refetch();
     void roomWalletStateQuery.refetch();
+    if (actionType === "approve" && actionRoomId) {
+      const room = liveRooms.find((item) => item.id === actionRoomId);
+      if (room) {
+        setActionType("join");
+        void roomWalletStateQuery.refetch().then(() => {
+          writeContract({
+            ...roomContract,
+            address: room.address,
+            chainId: monadTestnetChain.id,
+            functionName: "joinRoom",
+          });
+        });
+      }
+      return;
+    }
     if (actionType === "join" && actionRoomId) {
       onJoin ? onJoin(actionRoomId) : router.push(`/arena/${actionRoomId}`);
     }
-  }, [actionRoomId, actionType, onJoin, roomWalletStateQuery, roomsQuery, router, txSuccess]);
+  }, [actionRoomId, actionType, liveRooms, onJoin, roomWalletStateQuery, roomsQuery, router, txSuccess, writeContract]);
 
   const handlePrimaryAction = async (room: LiveRoom) => {
     setActionError(null);
@@ -277,7 +288,9 @@ export function Lobby({
               onSpectate={() =>
                 onSpectate ? onSpectate(room.id) : router.push(`/arena/${room.id}?mode=spectate`)
               }
-              primaryDisabled={isWritePending || isReceiptLoading ? actionRoomId !== room.id : undefined}
+              primaryDisabled={
+                room.source === "mock" || (isWritePending || isReceiptLoading ? actionRoomId !== room.id : undefined)
+              }
               primaryLabel={getPrimaryLabel({
                 actionRoomId,
                 address,
@@ -298,7 +311,11 @@ export function Lobby({
           className="mt-10 text-center text-white/30 uppercase tracking-[0.3em]"
           style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px" }}
         >
-          {roomsQuery.isLoading ? "— Loading rooms —" : "— Live contract rooms —"}
+          {roomsQuery.isLoading
+            ? "— Loading rooms —"
+            : roomsQuery.isError
+              ? "— Ops room cache unavailable —"
+              : "— Live ops room cache —"}
         </div>
       </div>
     </section>
@@ -326,6 +343,7 @@ function getPrimaryLabel({
   roomAllowance: bigint;
   actionType: "approve" | "join" | null;
 }) {
+  if (room.source === "mock") return "PREVIEW";
   if (room.status === "finished") return "CLOSED";
   if (!isConnected || !address) return "CONNECT";
   if (!isOnMonad) return "SWITCH";

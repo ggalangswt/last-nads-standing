@@ -1,9 +1,9 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { parseUnits } from "viem";
-import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { useAccount, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 
 import {
   CoinsIcon,
@@ -15,9 +15,9 @@ import {
   ZapIcon,
 } from "@/components/figma/icons";
 import { GameSlider } from "@/components/figma/slider";
-import { factoryContract, mockUsdcContract } from "@/lib/contracts/config";
 import { getErrorMessage, switchToMonadNetwork } from "@/lib/network";
 import { monadTestnetChain } from "@/lib/wagmi/chain";
+import { factoryContract } from "@/lib/contracts/config";
 
 type CreateRoomModalProps = {
   onClose: () => void;
@@ -26,13 +26,14 @@ type CreateRoomModalProps = {
 };
 
 export function CreateRoomModal({ open, onClose, onCreated }: CreateRoomModalProps) {
-  const [entryFee, setEntryFee] = useState(2.5);
-  const [minPlayers, setMinPlayers] = useState(20);
-  const [maxPlayers, setMaxPlayers] = useState(50);
-  const [elimPct, setElimPct] = useState(20);
-  const [interval, setInterval] = useState(12);
+  const [entryFee, setEntryFee] = useState(1);
+  const [minPlayers, setMinPlayers] = useState(2);
+  const [maxPlayers, setMaxPlayers] = useState(10);
+  const [elimPct, setElimPct] = useState(30);
+  const [interval, setInterval] = useState(5);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [switching, setSwitching] = useState(false);
+  const handledSuccessRef = useRef<string | null>(null);
 
   const { address, chain, isConnected } = useAccount();
   const isOnMonad = chain?.id === monadTestnetChain.id;
@@ -41,49 +42,11 @@ export function CreateRoomModal({ open, onClose, onCreated }: CreateRoomModalPro
     hash: writeHash,
   });
 
-  const decimalsQuery = useReadContract({
-    ...mockUsdcContract,
-    chainId: monadTestnetChain.id,
-    functionName: "decimals",
-  });
-
-  const defaultsQuery = useReadContract({
-    ...factoryContract,
-    chainId: monadTestnetChain.id,
-    functionName: "defaultMinPlayers",
-  });
-
-  const defaultMaxQuery = useReadContract({
-    ...factoryContract,
-    chainId: monadTestnetChain.id,
-    functionName: "defaultMaxPlayers",
-  });
-
-  const defaultElimQuery = useReadContract({
-    ...factoryContract,
-    chainId: monadTestnetChain.id,
-    functionName: "defaultEliminationPct",
-  });
-
-  const defaultIntervalQuery = useReadContract({
-    ...factoryContract,
-    chainId: monadTestnetChain.id,
-    functionName: "defaultRoundInterval",
-  });
-
   const estimatedPool = useMemo(() => Number((entryFee * maxPlayers).toFixed(2)), [entryFee, maxPlayers]);
   const estimatedRounds = useMemo(() => {
     const rounds = Math.ceil(Math.log(1 / maxPlayers) / Math.log(1 - elimPct / 100));
     return Number.isFinite(rounds) ? Math.max(1, rounds) : 0;
   }, [elimPct, maxPlayers]);
-
-  useEffect(() => {
-    if (!open) return;
-    if (defaultsQuery.data) setMinPlayers(Number(defaultsQuery.data));
-    if (defaultMaxQuery.data) setMaxPlayers(Number(defaultMaxQuery.data));
-    if (defaultElimQuery.data) setElimPct(Number(defaultElimQuery.data));
-    if (defaultIntervalQuery.data) setInterval(Number(defaultIntervalQuery.data));
-  }, [defaultElimQuery.data, defaultIntervalQuery.data, defaultMaxQuery.data, defaultsQuery.data, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -99,16 +62,24 @@ export function CreateRoomModal({ open, onClose, onCreated }: CreateRoomModalPro
   }, [open, onClose]);
 
   useEffect(() => {
-    if (!isCreateSuccess) return;
+    if (!isCreateSuccess || !writeHash) return;
+    if (handledSuccessRef.current === writeHash) return;
+    handledSuccessRef.current = writeHash;
     onCreated?.();
     onClose();
-  }, [isCreateSuccess, onClose, onCreated]);
+  }, [isCreateSuccess, onClose, onCreated, writeHash]);
+
+  useEffect(() => {
+    if (!open) {
+      handledSuccessRef.current = null;
+    }
+  }, [open]);
 
   if (!open) {
     return null;
   }
 
-  const decimals = Number(decimalsQuery.data ?? 6);
+  const decimals = 6;
   const submitLabel = !isConnected
     ? "CONNECT WALLET"
     : !isOnMonad
@@ -237,15 +208,15 @@ export function CreateRoomModal({ open, onClose, onCreated }: CreateRoomModalPro
           <div className="grid grid-cols-2 gap-5">
             <GameSlider
               label="Min Players"
-              max={Math.max(10, maxPlayers - 5)}
-              min={5}
+              max={9}
+              min={2}
               onChange={setMinPlayers}
               value={minPlayers}
             />
             <GameSlider
               label="Max Players"
-              max={100}
-              min={Math.min(minPlayers + 5, 50)}
+              max={10}
+              min={Math.min(minPlayers + 1, 9)}
               onChange={setMaxPlayers}
               value={maxPlayers}
             />

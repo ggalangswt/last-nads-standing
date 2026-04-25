@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { CreateRoomModal } from "@/components/figma/create-room-modal";
@@ -23,6 +23,14 @@ export default function HomePage() {
 
   const liveCount = rooms.filter((room) => room.status !== "finished").length;
   const onlineCount = rooms.reduce((total, room) => total + room.players, 0);
+  const handleRoomCreated = useCallback(() => {
+    setRoomRefreshKey((current) => current + 1);
+  }, []);
+  const handleCloseCreate = useCallback(() => setCreateOpen(false), []);
+  const handleCloseHow = useCallback(() => setHowOpen(false), []);
+  const handleHome = useCallback(() => setView("landing"), []);
+  const handleLobby = useCallback(() => setView("lobby"), []);
+  const handleFaucet = useCallback(() => setView("faucet"), []);
 
   return (
     <div className="min-h-screen w-full bg-[#07070b] text-white">
@@ -33,18 +41,18 @@ export default function HomePage() {
           liveCount={liveCount || 12}
           onlineCount={onlineCount || 2384}
           onCreateRoom={() => setCreateOpen(true)}
-          onFaucet={() => setView("faucet")}
-          onHome={() => setView("landing")}
+          onFaucet={handleFaucet}
+          onHome={handleHome}
           onHowItWorks={() => setHowOpen(true)}
-          onPlay={() => setView("lobby")}
+          onPlay={handleLobby}
           variant={view}
         />
         {view === "landing" ? (
           <div className="flex flex-1 flex-col" style={{ minHeight: "calc(100vh - 73px)" }}>
-            <Hero onHowItWorks={() => setHowOpen(true)} onPlay={() => setView("lobby")} />
+            <Hero onHowItWorks={() => setHowOpen(true)} onPlay={handleLobby} />
           </div>
         ) : view === "faucet" ? (
-          <Faucet onBack={() => setView("lobby")} />
+          <Faucet onBack={handleLobby} />
         ) : (
           <Lobby
             onCreateRoom={() => setCreateOpen(true)}
@@ -55,8 +63,8 @@ export default function HomePage() {
           />
         )}
       </div>
-      <CreateRoomModal onClose={() => setCreateOpen(false)} onCreated={() => setRoomRefreshKey((current) => current + 1)} open={createOpen} />
-      <HowItWorksModal onClose={() => setHowOpen(false)} open={howOpen} />
+      <CreateRoomModal onClose={handleCloseCreate} onCreated={handleRoomCreated} open={createOpen} />
+      <HowItWorksModal onClose={handleCloseHow} open={howOpen} />
     </div>
   );
 }
