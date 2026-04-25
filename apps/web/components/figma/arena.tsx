@@ -70,9 +70,9 @@ type ArenaSnapshot = {
 
 const DEMO_ROOM_ID = "1";
 const DEMO_ROOM_ADDRESS = "0xaddbeBf119a6CB87e2E221ed3cE8cFf35aB3c774" as const;
-const DEMO_ENTRY_RAW = 1_000_000n;
-const DEMO_MIN_PLAYERS = 8n;
-const DEMO_MAX_PLAYERS = 10n;
+const DEMO_ENTRY_RAW = BigInt(1_000_000);
+const DEMO_MIN_PLAYERS = BigInt(8);
+const DEMO_MAX_PLAYERS = BigInt(10);
 const DEMO_INTERVAL_SECONDS = 5;
 const DEMO_ELIMINATION_PCT = 25;
 
